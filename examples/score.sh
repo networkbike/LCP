@@ -4,16 +4,16 @@
 #
 # Usage:
 #   ./score.sh <TOKEN_OR_POOL_ADDRESS> [network]
-#   ./score.sh native:PHRS [network]
+#   ./score.sh native:PROS [network]
 #
-# Networks: atlantic-testnet (default), mainnet
+# Networks: mainnet (default), atlantic-testnet
 # Output:   human-readable report on stdout, JSON on stdout if LCP_JSON=1
 
 set -euo pipefail
 
 # --- Args ---------------------------------------------------------------------
 TARGET="${1:-}"
-NETWORK="${2:-atlantic-testnet}"
+NETWORK="${2:-mainnet}"
 LCP_JSON="${LCP_JSON:-0}"
 
 if [[ -z "$TARGET" ]]; then

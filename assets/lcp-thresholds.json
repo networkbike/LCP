@@ -1,5 +1,5 @@
 {
-  "_about": "LCP (Liquidity Crisis Predictor) tunable thresholds. Read by references/risk-model.md. Edit only if you have empirical justification; defaults are conservative for Pharos Atlantic testnet.",
+  "_about": "LCP (Liquidity Crisis Predictor) tunable thresholds. Read by references/risk-model.md. Edit only with empirical justification; defaults are conservative.",
   "version": "0.1.0",
   "bands": {
     "healthy_max": 29,

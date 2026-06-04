@@ -1,6 +1,6 @@
 {
   "schema": "lcp.result.v1",
-  "network": "atlantic-testnet",
+  "network": "mainnet",
   "target": "0xExampleToken0000000000000000000000000000000abc",
   "score": 72,
   "band": "CRITICAL",

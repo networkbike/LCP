@@ -10,9 +10,12 @@ If a signal cannot be retrieved, **do not invent a value**. Mark it
 
 ## 0. Bootstrap
 
+The default network is `mainnet`. The Agent must use `atlantic-testnet` only
+when the user explicitly asks for it.
+
 ```bash
-# Resolve active network
-NETWORK="${LCP_NETWORK:-atlantic-testnet}"
+# Resolve active network (default: mainnet)
+NETWORK="${LCP_NETWORK:-mainnet}"
 RPC_URL=$(jq -r --arg n "$NETWORK" \
   '.networks[] | select(.name==$n) | .rpcUrl' assets/networks.json)
 CHAIN_ID=$(jq -r --arg n "$NETWORK" \
@@ -69,6 +72,9 @@ TRANSFER_TOPIC=0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3e
 WINDOW=5000
 LATEST=$(cast block-number --rpc-url "$RPC_URL")
 FROM=$((LATEST - WINDOW))
+
+# Example: mainnet defaults
+RPC_URL=$(jq -r '.networks[] | select(.name=="mainnet") | .rpcUrl' assets/networks.json)
 
 cast logs --rpc-url "$RPC_URL" \
   --from-block "$FROM" --to-block "$LATEST" \

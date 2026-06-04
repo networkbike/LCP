@@ -1,49 +1,65 @@
 # LCP — Liquidity Crisis Predictor
 
-> A read-only on-chain analytics Skill for the **Pharos Agent Center**.
-> Submit a token, a pool, or the native asset; LCP returns a deterministic
-> 0–100 liquidity-stress score, a band (`HEALTHY` / `WATCH` / `CRITICAL`),
-> a crisis probability, the top three contributing signals, and a
-> recommendation.
+A deterministic, read-only on-chain analytics skill that produces a
+**0–100 liquidity-stress score**, a **HEALTHY / WATCH / CRITICAL** band, a
+**crisis probability**, and the **top contributing signals** for any ERC-20
+token, liquidity pool, or native asset on Pharos.
 
-> ⚠️ **LCP is informational only. It is not financial advice. It never asks
-> for, signs, or broadcasts transactions.**
+LCP consumes only public on-chain data via `cast` and `forge`. It does not
+sign, send, or propose any transaction. It does not call any external HTTP
+oracle. It does not require a private key.
 
 ---
 
-## What LCP does
+## Overview
 
-Given any ERC-20 token, liquidity pool, or native asset (PHRS / PROS) on
-Pharos Atlantic Testnet (default) or Pharos Mainnet, LCP:
+Given a target (token, pool, or `native:PHRS` / `native:PROS`) on a Pharos
+network, LCP:
 
-1. Pulls seven on-chain signals via `cast` / `forge`:
-   - `reserve_depth` — primary pool USD-equivalent depth
-   - `outflow_velocity` — recent Transfer volume / totalSupply
-   - `holder_concentration` — H1 share
-   - `pool_imbalance` — deviation from design ratio
-   - `gas_stress` — current gas vs 200-block median
-   - `liquidity_age` — blocks since first AddLiquidity
-   - `supply_growth` — totalSupply drift
-2. Normalizes each into `[0, 1]` and weights them per
+1. Pulls seven on-chain signals (reserves, outflow velocity, holder
+   concentration, pool imbalance, gas stress, liquidity age, supply growth)
+   directly from RPC.
+2. Normalizes each signal into `[0, 1]` and weights them per
    `assets/lcp-thresholds.json`.
 3. Maps the weighted sum to a band and a logistic crisis probability.
-4. Returns a driver report (top 3 contributors) and a recommendation
-   (`hold` / `reduce exposure` / `do not enter`).
+4. Returns a driver report (top 3 contributors) and an informational
+   recommendation.
 
-All math is deterministic. Same inputs → same score.
+All math is deterministic. Same inputs and block height → same score.
 
-## What LCP does **not** do
+## Network
 
-- It does **not** send transactions, deploy contracts, or move funds.
-- It does **not** read or accept a private key.
-- It does **not** call any external HTTP oracle (CoinGecko, DefiLlama, etc.).
-- It does **not** make a recommendation you should treat as advice.
+| Parameter | Value |
+|-----------|-------|
+| Primary network | **Pharos Mainnet** |
+| Secondary network | Pharos Atlantic Testnet (development & calibration) |
+| Chain ID (mainnet) | 1672 |
+| Chain ID (testnet) | 688689 |
+| Native token (mainnet) | PROS |
+| Native token (testnet) | PHRS |
+| Default when unspecified | mainnet |
+
+Network details, RPC endpoints, and explorer URLs live in
+`assets/networks.json`. The `defaultNetwork` field is set to `mainnet`; the
+Agent uses it whenever the user does not name a network.
+
+## Framework
+
+| Item | Value |
+|------|-------|
+| Format | Pharos Skill Engine `.md` skill with YAML frontmatter |
+| Required binaries | `cast`, `forge`, `jq`, `bc` |
+| Required runtime | Foundry (`curl -L https://foundry.paradigm.xyz \| bash`) |
+| Optional CLI | `examples/score.sh` (single-asset scorer) |
+| Wallet / private key | **not required, not accepted** |
+| Write operations | **none** |
+| External oracles | **none** |
 
 ## Repository layout
 
 ```
 LCP/
-├── SKILL.md                    # Skill manifest (frontmatter + body)
+├── SKILL.md                    # skill manifest (frontmatter + body)
 ├── README.md                   # this file
 ├── LICENSE                     # MIT
 ├── assets/
@@ -64,8 +80,7 @@ LCP/
 
 ## Installation
 
-LCP is a pure-Skill asset; no code is compiled. Drop the `LCP/` directory
-into the Skills path of your Agent framework:
+Drop the `LCP/` directory into the Skills path of your Agent framework.
 
 | Framework | Path |
 |-----------|------|
@@ -74,7 +89,7 @@ into the Skills path of your Agent framework:
 | Codex     | `~/.codex/skills/LCP/` |
 | Project-level | `<your-project>/skills/LCP/` |
 
-Verify:
+Verify the skill is loaded:
 
 ```bash
 # OpenClaw
@@ -86,38 +101,63 @@ openclaw skills list | grep liquidity-crisis-predictor
 
 ## Prerequisites
 
-- [`cast`](https://book.getfoundry.sh/) and `forge` from **Foundry**
+- [`cast` and `forge`](https://book.getfoundry.sh/) from **Foundry**
 - `jq` ≥ 1.6
 - `bc` (any version)
-- An outbound HTTPS connection to the Pharos RPC
+- Outbound HTTPS to the Pharos RPC
 
-LCP does not require a private key, a wallet, or any seed phrase.
+LCP does not require a wallet, a private key, a seed phrase, or any API
+token.
 
-## Usage — single asset
+## Usage
 
-Ask your Agent:
+### Single asset
 
-> LCP, score the liquidity risk of `0xYourToken...` on Pharos Atlantic
-> testnet. Show the band, top 3 drivers, and a recommendation.
+> LCP, score the liquidity risk of `0xYourToken...` on Pharos mainnet. Show
+> the band, top 3 drivers, and a recommendation.
 
-The Agent loads `SKILL.md`, follows `references/predict.md`, and prints a
-report like the one in `examples/sample-output.json`.
+### Native asset
 
-## Usage — batch
+> LCP, score `native:PROS` on Pharos mainnet.
 
-> LCP, score these tokens on Atlantic testnet: `0xAAA..., 0xBBB..., native:PHRS`
-> Output as a sorted table.
+### Batch
 
-The Agent runs the single-asset workflow for each target and emits a summary
-table.
+> LCP, score these on Pharos mainnet: `0xAAA..., 0xBBB..., native:PROS`.
+> Output a sorted table.
 
-## Usage — JSON for downstream agents
+### JSON for downstream agents
 
-> LCP, score `0xYourToken...` on Atlantic testnet. Return JSON, schema
+> LCP, score `0xYourToken...` on Pharos mainnet. Return JSON, schema
 > `lcp.result.v1`.
 
-The output is a single object whose first key is `schema` (always
-`lcp.result.v1`). See `examples/sample-output.json` for the full schema.
+The output object is fixed-shape; its first key is always `schema` with value
+`"lcp.result.v1"`. See `examples/sample-output.json`.
+
+### CLI (no Agent required)
+
+```bash
+./examples/score.sh 0xYourToken... mainnet
+# or
+./examples/score.sh native:PROS mainnet
+# or, for JSON
+LCP_JSON=1 ./examples/score.sh 0xYourToken... mainnet
+```
+
+## Output contract
+
+Every LCP result includes:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `network` | string | `mainnet` or `atlantic-testnet` |
+| `target` | string | token / pool / `native:PROS` / `native:PHRS` |
+| `score` | int | `[0, 100]`, integer, deterministic |
+| `band` | enum | `HEALTHY` (0–29) / `WATCH` (30–64) / `CRITICAL` (65–100) |
+| `p_crisis` | float | `[0, 1]`, two decimals, logistic mapping |
+| `drivers` | list | top 3 contributing signals, descending |
+| `missing` | list | signals that could not be fetched |
+| `recommendation` | string | `hold` / `reduce exposure` / `do not enter` |
+| `disclaimer` | string | always present, fixed text |
 
 ## Tunability
 
@@ -125,30 +165,28 @@ All thresholds, weights, and bands live in `assets/lcp-thresholds.json`. A
 maintainer can:
 
 - Adjust band cutoffs (`healthy_max`, `watch_max`, `critical_min`).
-- Rebalance the seven weights (must sum to ≤ 1.0; rescaled at runtime if
-  signals are missing).
+- Rebalance the seven signal weights (must sum to ≤ 1.0; rescaled at
+  runtime when signals are missing).
 - Tweak the crisis-probability logistic (`k`, `x0`).
 
-See `references/risk-model.md#calibration` for the empirical procedure.
+The empirical calibration procedure is documented in
+`references/risk-model.md#calibration`.
 
-## Security
+## Safety properties
 
-- LCP is **read-only**. It does not sign, send, or propose any transaction.
-- LCP **must not** be combined with a private key. If the host environment
-  has `$PRIVATE_KEY` set, LCP ignores it.
-- LCP does not call external HTTP oracles; all signals are on-chain.
-- The Skill is informational. It must never be used to construct
-  wallet-draining, phishing, or social-engineering flows.
-
-## Compliance with the Pharos Skill Builder Campaign
-
-- ✅ Original implementation
-- ✅ Public on GitHub: `https://github.com/networkbike/LCP`
-- ✅ Includes usage instructions (`SKILL.md` + `references/` + `examples/`)
-- ✅ Functional: deterministic score from on-chain signals
-- ✅ Relevant to Pharos Agent Center (reads Pharos chains, uses `cast` /
-  `forge`)
-- ✅ No malicious code, no wallet-drainer, no phishing logic
+- **Read-only.** No `cast send`, no `forge script`, no transaction
+  construction of any kind.
+- **No private key.** LCP refuses to read or accept `$PRIVATE_KEY`. The CLI
+  exits with code 77 if one is set in the environment.
+- **No external HTTP.** All signals come from the Pharos RPC. No price
+  oracles, no analytics APIs, no telemetry.
+- **Honest about missing data.** Missing signals are down-weighted, never
+  fabricated. They are always listed in the `missing` field of the output.
+- **No mainnet-by-default on writes** is moot here — LCP makes no writes.
+  Mainnet is the default read network because that is the network users
+  actually need assessed.
+- **Informational only.** The `recommendation` field is descriptive, not
+  prescriptive. LCP is not financial advice.
 
 ## License
 

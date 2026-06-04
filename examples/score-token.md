@@ -1,13 +1,13 @@
 # Example — Score a Single Token
 
 This is a complete, copy-pasteable trace of an LCP run for a fictional ERC-20
-token on Pharos Atlantic Testnet. All values are illustrative.
+token on Pharos Mainnet. All values are illustrative.
 
 ## 1. User prompt
 
 > LCP, score the liquidity risk of `0xExampleToken0000000000000000000000000000000abc`
-> on Pharos Atlantic testnet. Show the band, top 3 drivers, and a
-> recommendation. Return JSON, schema `lcp.result.v1`.
+> on Pharos mainnet. Show the band, top 3 drivers, and a recommendation.
+> Return JSON, schema `lcp.result.v1`.
 
 ## 2. Agent loads the Skill
 
@@ -18,11 +18,11 @@ and reads `references/data-collection.md`, `references/risk-model.md`, and
 ## 3. Bootstrap
 
 ```bash
-RPC_URL=$(jq -r '.networks[] | select(.name=="atlantic-testnet") | .rpcUrl' assets/networks.json)
-# https://atlantic.dplabs-internal.com
+RPC_URL=$(jq -r '.networks[] | select(.name=="mainnet") | .rpcUrl' assets/networks.json)
+# https://rpc.pharos.xyz
 
 cast chain-id --rpc-url "$RPC_URL"
-# 688689
+# 1672
 ```
 
 ## 4. Signal collection
@@ -85,7 +85,7 @@ p_crisis = 1 / (1 + exp(-0.12 * (79 - 60))) ≈ 0.91
 ```json
 {
   "schema": "lcp.result.v1",
-  "network": "atlantic-testnet",
+  "network": "mainnet",
   "target": "0xExampleToken0000000000000000000000000000000abc",
   "score": 79,
   "band": "CRITICAL",

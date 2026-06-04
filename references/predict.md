@@ -7,8 +7,9 @@ single-asset scoring, batch scoring, and machine-readable output.
 
 ### 1.1 Inputs (from user prompt)
 
-- `target` — ERC-20 address, pool address, or `native:PHRS` / `native:PROS`.
-- `network` — optional; default `atlantic-testnet`.
+- `target` — ERC-20 address, pool address, or `native:PROS` / `native:PHRS`.
+- `network` — optional; default `mainnet`. Use `atlantic-testnet` only when
+  the user explicitly asks for it.
 - `format` — optional; `human` (default) or `json`.
 
 ### 1.2 Steps
@@ -16,8 +17,8 @@ single-asset scoring, batch scoring, and machine-readable output.
 1. **Bootstrap** — resolve `RPC_URL`, `CHAIN_ID`, sanity-check the chain.
 2. **Pre-check** — verify `cast`, `forge`, `jq`, `bc` on `PATH`. Validate the
    `target` format. Reject if a `$PRIVATE_KEY` was supplied.
-3. **Collect signals** — per `references/data-collection.md`. If the target is
-   `native:*`, take the native path; otherwise the ERC-20 path; if a pool
+3. **Collect signals** — per `references/data-collection.md`. If the target
+   is `native:*`, take the native path; otherwise the ERC-20 path; if a pool
    address matches `assets/known-pools.json`, layer the pool path on top.
 4. **Normalize** — per `references/risk-model.md` §2.
 5. **Weight** — per `references/risk-model.md` §3.
@@ -27,16 +28,16 @@ single-asset scoring, batch scoring, and machine-readable output.
 9. **Recommendation** — per §8.
 10. **Render** — human or JSON per §3 below.
 
-### 1.3 Example Prompt
+### 1.3 Example prompt
 
-> LCP: assess the liquidity risk of `0xToken...` on Pharos Atlantic testnet.
-> Show the score, band, top 3 drivers, and a recommendation.
+> LCP: assess the liquidity risk of `0xToken...` on Pharos mainnet. Show
+> the score, band, top 3 drivers, and a recommendation.
 
-### 1.4 Example Human Output
+### 1.4 Example human output
 
 ```
 LCP — Liquidity Crisis Predictor
-Network:   Atlantic Testnet (atlantic-testnet)
+Network:   Pharos Mainnet (mainnet)
 Target:    0xToken...
 Score:     72 / 100
 Band:      CRITICAL
@@ -61,33 +62,33 @@ subsequent action.
 When the user supplies multiple targets (CSV, JSON array, or comma-separated
 addresses), run each through §1 in series and emit a summary table.
 
-### 2.1 Input Format (CSV)
+### 2.1 Input format (CSV)
 
 ```csv
 target,network
-0xTokenA...,atlantic-testnet
-0xTokenB...,atlantic-testnet
-native:PHRS,atlantic-testnet
+0xTokenA...,mainnet
+0xTokenB...,mainnet
+native:PROS,mainnet
 ```
 
-### 2.2 Output Table
+### 2.2 Output table
 
 | Target | Network | Score | Band | P(crisis) | Recommendation |
 |--------|---------|-------|------|-----------|----------------|
-| `0xTokenA...` | atlantic-testnet | 12  | HEALTHY  | 0.05 | hold |
-| `0xTokenB...` | atlantic-testnet | 72  | CRITICAL | 0.91 | do not enter |
-| `native:PHRS` | atlantic-testnet | 28  | HEALTHY  | 0.13 | hold |
+| `0xTokenA...` | mainnet     | 12  | HEALTHY  | 0.05 | hold |
+| `0xTokenB...` | mainnet     | 72  | CRITICAL | 0.91 | do not enter |
+| `native:PROS` | mainnet     | 28  | HEALTHY  | 0.13 | hold |
 
 Sort by `score` descending unless the user specifies otherwise.
 
-## 3. Machine-Readable Output
+## 3. Machine-readable output
 
 When `format=json`, emit a single object per target:
 
 ```json
 {
   "schema": "lcp.result.v1",
-  "network": "atlantic-testnet",
+  "network": "mainnet",
   "target": "0xToken...",
   "score": 72,
   "band": "CRITICAL",
@@ -108,12 +109,12 @@ so downstream agents can dispatch on it before parsing the rest.
 
 ## 4. Caching
 
-Within a single Agent session, LCP results for the same `(target, network,
-block_height)` MAY be cached for the duration of the session. Do not cache
-across sessions — on-chain state can change and the result is no longer
-fresh.
+Within a single Agent session, LCP results for the same
+`(target, network, block_height)` MAY be cached for the duration of the
+session. Do not cache across sessions — on-chain state can change and the
+result is no longer fresh.
 
-## 5. Failure Modes
+## 5. Failure modes
 
 | Condition | Behavior |
 |-----------|----------|
@@ -126,9 +127,9 @@ fresh.
 The Agent must never silently substitute fake values. If you cannot compute
 the score honestly, say so.
 
-## 6. Safety Re-confirmation (read-only is implicit, but)
+## 6. Safety re-confirmation (internal, not output)
 
-Even though LCP is read-only, before any output the Agent must confirm:
+Before any output the Agent must confirm internally:
 
 1. It did not call `cast send` or `forge script`.
 2. It did not sign any transaction.
@@ -136,7 +137,7 @@ Even though LCP is read-only, before any output the Agent must confirm:
 
 These checks are an internal invariant. They are not output to the user.
 
-## 7. Worked End-to-End Example
+## 7. Worked end-to-end example
 
 See `examples/score-token.md` and `examples/sample-output.json` for a
 complete trace from prompt to result.
