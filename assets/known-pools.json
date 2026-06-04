@@ -1,0 +1,11 @@
+{
+  "_about": "Optional registry of well-known Pharos liquidity pools. LCP looks up pair-side reserves and design ratios here. Unlisted pools fall back to token-only scoring.",
+  "version": "0.1.0",
+  "design_ratio": {
+    "_comment": "Design ratio of side_A : side_B at pool creation. Used as the pool_imbalance baseline.",
+    "stable_stable": 0.5,
+    "volatile_stable": 0.5,
+    "volatile_volatile": 0.5
+  },
+  "pools": []
+}

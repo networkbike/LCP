@@ -1,0 +1,16 @@
+{
+  "schema": "lcp.result.v1",
+  "network": "atlantic-testnet",
+  "target": "0xExampleToken0000000000000000000000000000000abc",
+  "score": 72,
+  "band": "CRITICAL",
+  "p_crisis": 0.91,
+  "drivers": [
+    { "signal": "outflow_velocity",    "raw": 0.142,  "norm": 1.00, "contrib": 0.40 },
+    { "signal": "reserve_depth",       "raw": 41200,  "norm": 0.95, "contrib": 0.24 },
+    { "signal": "pool_imbalance",      "raw": 0.41,   "norm": 1.00, "contrib": 0.15 }
+  ],
+  "missing": ["liquidity_age", "gas_stress"],
+  "recommendation": "do not enter",
+  "disclaimer": "LCP is an informational on-chain analytics signal. It is not financial advice. On-chain conditions can change between the read and any subsequent action."
+}

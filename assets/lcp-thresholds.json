@@ -1,0 +1,83 @@
+{
+  "_about": "LCP (Liquidity Crisis Predictor) tunable thresholds. Read by references/risk-model.md. Edit only if you have empirical justification; defaults are conservative for Pharos Atlantic testnet.",
+  "version": "0.1.0",
+  "bands": {
+    "healthy_max": 29,
+    "watch_max": 64,
+    "critical_min": 65
+  },
+  "weights": {
+    "reserve_depth": 0.25,
+    "outflow_velocity": 0.20,
+    "holder_concentration": 0.15,
+    "pool_imbalance": 0.15,
+    "gas_stress": 0.10,
+    "liquidity_age": 0.10,
+    "supply_growth": 0.05
+  },
+  "signals": {
+    "reserve_depth": {
+      "description": "Normalized depth of the primary liquidity pool, in USD-equivalent (post-decimal scaling).",
+      "unit": "usd_equivalent",
+      "healthy_above": 1000000,
+      "watch_above": 100000,
+      "critical_below": 100000,
+      "missing_policy": "downweight_to_neighbors"
+    },
+    "outflow_velocity": {
+      "description": "Net ERC-20 Transfer volume out of the top 10 holders over the last WINDOW_BLOCKS, normalized by totalSupply.",
+      "unit": "ratio",
+      "healthy_below": 0.02,
+      "watch_below": 0.10,
+      "critical_above": 0.10,
+      "window_blocks": 5000
+    },
+    "holder_concentration": {
+      "description": "Share of totalSupply held by the single largest holder (H1).",
+      "unit": "ratio",
+      "healthy_below": 0.20,
+      "watch_below": 0.50,
+      "critical_above": 0.50
+    },
+    "pool_imbalance": {
+      "description": "Absolute deviation of the pool's reserve ratio from 50/50 (or its design ratio).",
+      "unit": "ratio",
+      "healthy_below": 0.10,
+      "watch_below": 0.30,
+      "critical_above": 0.30
+    },
+    "gas_stress": {
+      "description": "Current gas price relative to a 5000-block rolling median.",
+      "unit": "ratio",
+      "healthy_below": 1.5,
+      "watch_below": 3.0,
+      "critical_above": 3.0
+    },
+    "liquidity_age": {
+      "description": "Blocks since the pool's first AddLiquidity event (younger = riskier).",
+      "unit": "blocks",
+      "healthy_above": 200000,
+      "watch_above": 50000,
+      "critical_below": 50000
+    },
+    "supply_growth": {
+      "description": "Relative change in totalSupply over the last WINDOW_BLOCKS (mint pressure).",
+      "unit": "ratio",
+      "healthy_below": 0.05,
+      "watch_below": 0.20,
+      "critical_above": 0.20,
+      "window_blocks": 5000
+    }
+  },
+  "crisis_probability": {
+    "description": "Logistic mapping from raw score to P(crisis in next ~24h). Calibrated conservatively for testnet.",
+    "k": 0.12,
+    "x0": 60
+  },
+  "recommendation_rules": [
+    { "if_band": "HEALTHY",  "action": "hold" },
+    { "if_band": "WATCH",    "action": "reduce exposure" },
+    { "if_band": "CRITICAL", "action": "do not enter" }
+  ],
+  "disclaimer": "LCP is an informational on-chain analytics signal. It is not financial advice. On-chain conditions can change between the read and any subsequent action."
+}

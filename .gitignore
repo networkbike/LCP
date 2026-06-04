@@ -1,0 +1,22 @@
+# Build / cache
+*.log
+*.tmp
+/tmp/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Foundry
+out/
+cache/
+broadcast/
+
+# Secrets — never commit
+.env
+*.pem
+*.key
