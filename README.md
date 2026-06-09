@@ -80,34 +80,123 @@ LCP/
 
 ## Installation
 
-Drop the `LCP/` directory into the Skills path of your Agent framework.
+LCP is a **drop-in skill bundle**, not an installable package. There is no
+`npm install`, `pip install`, or `cargo build` step. You copy the directory
+into your Agent's skills path and make sure the four required binaries are
+on your `PATH`.
 
-| Framework | Path |
-|-----------|------|
-| OpenClaw  | `~/.openclaw/skills/LCP/` |
-| Claude Code | `~/.claude/skills/LCP/` |
-| Codex     | `~/.codex/skills/LCP/` |
-| Project-level | `<your-project>/skills/LCP/` |
+### 1. Prerequisites
 
-Verify the skill is loaded:
+Install these once, on the machine that runs your Agent:
+
+| Binary | Purpose | Install |
+|--------|---------|---------|
+| `git`   | clone this repo | [git-scm.com](https://git-scm.com/downloads) |
+| `cast`, `forge` | on-chain reads, event logs, block queries | Foundry: `curl -L https://foundry.paradigm.xyz \| bash && foundryup` ([book.getfoundry.sh](https://book.getfoundry.sh/getting-started/installation)) |
+| `jq` ≥ 1.6 | parse JSON (`networks.json`, `lcp-thresholds.json`, `cast --json` output) | `brew install jq` / `apt install jq` / [stedolan.github.io/jq](https://stedolan.github.io/jq/download/) |
+| `bc`  | floating-point math in `examples/score.sh` | preinstalled on macOS / most Linux distros; `apt install bc` if missing |
+| `bash` ≥ 4 | only needed for the optional `score.sh` CLI | preinstalled on macOS / most Linux distros |
+
+You also need **outbound HTTPS** to the Pharos RPC endpoints listed in
+`assets/networks.json` (e.g. `https://rpc.pharos.xyz` for mainnet).
+
+You do **not** need a wallet, a private key, a seed phrase, or any API
+token. LCP is read-only and will refuse to run if `$PRIVATE_KEY` is set in
+the environment (exit code 77).
+
+### 2. Clone the repository
 
 ```bash
-# OpenClaw
-openclaw skills list | grep liquidity-crisis-predictor
-
-# Claude Code / Codex
-/skills
+git clone https://github.com/networkbike/LCP.git
+cd LCP
 ```
 
-## Prerequisites
+### 3. Drop the skill into your Agent's skills path
 
-- [`cast` and `forge`](https://book.getfoundry.sh/) from **Foundry**
-- `jq` ≥ 1.6
-- `bc` (any version)
-- Outbound HTTPS to the Pharos RPC
+Copy (or symlink) the `LCP/` directory into whichever skills directory your
+Agent framework reads. The skill's folder name **must** be `LCP` (case
+sensitive) so the YAML `name: liquidity-crisis-predictor` in
+`SKILL.md` can resolve it.
 
-LCP does not require a wallet, a private key, a seed phrase, or any API
-token.
+| Framework | Skills path | Install command |
+|-----------|-------------|-----------------|
+| OpenClaw  | `~/.openclaw/skills/LCP/` | `cp -R LCP ~/.openclaw/skills/LCP` |
+| Claude Code | `~/.claude/skills/LCP/` | `cp -R LCP ~/.claude/skills/LCP` |
+| Codex     | `~/.codex/skills/LCP/` | `cp -R LCP ~/.codex/skills/LCP` |
+| Project-level (shared with a repo) | `<your-project>/skills/LCP/` | `mkdir -p <your-project>/skills && cp -R LCP <your-project>/skills/LCP` |
+
+> Prefer a **symlink** if you plan to pull upstream changes frequently:
+> `ln -s "$(pwd)/LCP" ~/.claude/skills/LCP`
+
+### 4. Make the optional CLI executable
+
+`examples/score.sh` is a standalone scorer that does not require an Agent
+runtime. Make it executable the first time you use it:
+
+```bash
+chmod +x examples/score.sh
+```
+
+### 5. Verify
+
+Run these one-liners to confirm everything is in place:
+
+```bash
+# 1. Required binaries
+for b in cast forge jq bc; do command -v "$b" >/dev/null && echo "OK  $b" || echo "MISSING $b"; done
+
+# 2. Skill files present
+ls SKILL.md assets/networks.json assets/lcp-thresholds.json
+
+# 3. Skill is loaded (framework-specific)
+# OpenClaw
+openclaw skills list | grep liquidity-crisis-predictor
+# Claude Code / Codex
+/skills
+
+# 4. Reach the Pharos RPC
+RPC_URL=$(jq -r '.networks[] | select(.name=="mainnet") | .rpcUrl' assets/networks.json)
+cast block-number --rpc-url "$RPC_URL"
+
+# 5. Smoke-test the CLI on a native asset (no address needed)
+./examples/score.sh native:PROS mainnet
+```
+
+A successful first run prints a human-readable report with a score, a band,
+`p_crisis`, three drivers, and the fixed disclaimer.
+
+### Updating
+
+```bash
+cd LCP                       # or wherever you cloned it
+git pull --ff-only
+# If you copied instead of symlinking, re-copy:
+#   cp -R LCP ~/.claude/skills/LCP
+```
+
+There are no migrations between LCP versions yet; the output schema
+(`lcp.result.v1`) and the seven-signal contract are stable.
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `Missing required binary: cast` | Foundry not on `PATH` | Re-run `foundryup`, then `source ~/.bashrc` / open a new shell |
+| `jq: command not found` | `jq` not installed | `brew install jq` (macOS) or `apt install jq` (Debian/Ubuntu) |
+| `RPC unreachable: https://rpc.pharos.xyz` | No outbound HTTPS, or the RPC is down | Test with `curl -I https://rpc.pharos.xyz`; switch to `atlantic-testnet` for development |
+| `Refusing to run: $PRIVATE_KEY is set` | You have a wallet env var set | `unset PRIVATE_KEY` for the LCP session. LCP is read-only and must not see keys |
+| `Unknown network: foo` | Typo in network name | Use exactly `mainnet` or `atlantic-testnet` (see `assets/networks.json`) |
+| `Invalid address: 0x...` | Not a 20-byte hex address | Re-check; the native assets are `native:PROS` and `native:PHRS`, not `0x...` |
+| Skill not listed in `/skills` | Wrong path, wrong folder name | Folder must be `LCP` (capital LCP) directly under the skills root |
+| `cast logs` returns `[]` for a brand-new token | No `Transfer` events in the lookback window | Expected. `outflow_velocity` is set to `0` and listed in `missing` |
+
+### Uninstall
+
+```bash
+# Remove the skill copy
+rm -rf ~/.claude/skills/LCP          # or whichever path you used
+# The four required binaries (Foundry, jq, bc) can stay; other tools use them too.
+```
 
 ## Usage
 
