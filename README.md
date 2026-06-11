@@ -48,12 +48,14 @@ Agent uses it whenever the user does not name a network.
 | Item | Value |
 |------|-------|
 | Format | Pharos Skill Engine `.md` skill with YAML frontmatter |
-| Required binaries | `cast`, `forge`, `jq`, `bc` |
-| Required runtime | Foundry (`curl -L https://foundry.paradigm.xyz \| bash`) |
+| Required runtime | **Foundry** (`cast`, `forge`, `anvil`) — mandatory |
+| Optional helpers | `jq` (for JSON output) |
+| `bc` | **not required** (legacy; the CLI uses `awk`) |
 | Optional CLI | `examples/score.sh` (single-asset scorer) |
 | Wallet / private key | **not required, not accepted** |
 | Write operations | **none** |
 | External oracles | **none** |
+| Test command | `forge test -vvv` (7 tests must pass) |
 
 ## Repository layout
 
@@ -62,6 +64,12 @@ LCP/
 ├── SKILL.md                    # skill manifest (frontmatter + body)
 ├── README.md                   # this file
 ├── LICENSE                     # MIT
+├── foundry.toml                # Foundry config (for `forge test`)
+├── src/
+│   └── MockERC20.sol           # minimal ERC-20 used by forge tests
+├── test/
+│   ├── LCP.t.sol               # Foundry test suite (forge test -vvv)
+│   └── test_score.sh           # Shell test runner for examples/score.sh
 ├── assets/
 │   ├── networks.json           # Pharos RPC + chain IDs
 │   ├── lcp-thresholds.json     # weights, bands, thresholds, policy
@@ -73,7 +81,7 @@ LCP/
 ├── examples/
 │   ├── score-token.md          # worked example
 │   ├── sample-output.json      # machine-readable LCP result
-│   └── score.sh                # copy-paste shell recipe
+│   └── score.sh                # copy-paste shell recipe (Foundry-powered)
 └── .github/
     └── ISSUE_TEMPLATE.md
 ```
@@ -87,18 +95,20 @@ on your `PATH`.
 
 ### 1. Prerequisites
 
-Install these once, on the machine that runs your Agent:
+LCP is **Foundry-first** — the Pharos Skill Agent runs the skill under
+`forge test`, so Foundry is the only required runtime.
 
 | Binary | Purpose | Install |
 |--------|---------|---------|
+| `cast`, `forge`, `anvil` | **Mandatory.** All on-chain reads and the test suite use Foundry. | `curl -L https://foundry.paradigm.xyz \| bash && foundryup` ([book.getfoundry.sh](https://book.getfoundry.sh/getting-started/installation)) |
 | `git`   | clone this repo | [git-scm.com](https://git-scm.com/downloads) |
-| `cast`, `forge` | on-chain reads, event logs, block queries | Foundry: `curl -L https://foundry.paradigm.xyz \| bash && foundryup` ([book.getfoundry.sh](https://book.getfoundry.sh/getting-started/installation)) |
-| `jq` ≥ 1.6 | parse JSON (`networks.json`, `lcp-thresholds.json`, `cast --json` output) | `brew install jq` / `apt install jq` / [stedolan.github.io/jq](https://stedolan.github.io/jq/download/) |
-| `bc`  | floating-point math in `examples/score.sh` | preinstalled on macOS / most Linux distros; `apt install bc` if missing |
-| `bash` ≥ 4 | only needed for the optional `score.sh` CLI | preinstalled on macOS / most Linux distros |
+| `jq`   | parse JSON output and `cast --json` results | `brew install jq` / `apt install jq` / [stedolan.github.io/jq](https://stedolan.github.io/jq/download/) |
+| `bash` ≥ 4 | only needed for the optional `examples/score.sh` CLI | preinstalled on macOS / most Linux distros |
+| `bc` | **not required** | the CLI uses `awk` for arithmetic |
 
 You also need **outbound HTTPS** to the Pharos RPC endpoints listed in
-`assets/networks.json` (e.g. `https://rpc.pharos.xyz` for mainnet).
+`assets/networks.json` (e.g. `https://rpc.pharos.xyz` for mainnet), OR a
+local Foundry `anvil` instance for testing.
 
 You do **not** need a wallet, a private key, a seed phrase, or any API
 token. LCP is read-only and will refuse to run if `$PRIVATE_KEY` is set in
@@ -142,23 +152,31 @@ chmod +x examples/score.sh
 Run these one-liners to confirm everything is in place:
 
 ```bash
-# 1. Required binaries
-for b in cast forge jq bc; do command -v "$b" >/dev/null && echo "OK  $b" || echo "MISSING $b"; done
+# 1. Required binaries (Foundry is the only mandatory one)
+for b in cast forge jq; do command -v "$b" >/dev/null && echo "OK  $b" || echo "MISSING $b"; done
 
 # 2. Skill files present
 ls SKILL.md assets/networks.json assets/lcp-thresholds.json
 
-# 3. Skill is loaded (framework-specific)
+# 3. Run the Foundry test suite — this is what the Pharos Skill Agent runs
+forge test -vvv
+# Expected: "Suite result: ok. 7 passed; 0 failed"
+
+# 4. Run the shell smoke tests for the CLI
+bash test/test_score.sh
+# Expected: "Results: 4 passed, 0 failed, 1 skipped"  (live test skipped by default)
+
+# 5. Skill is loaded (framework-specific)
 # OpenClaw
 openclaw skills list | grep liquidity-crisis-predictor
 # Claude Code / Codex
 /skills
 
-# 4. Reach the Pharos RPC
+# 6. Reach the Pharos RPC
 RPC_URL=$(jq -r '.networks[] | select(.name=="mainnet") | .rpcUrl' assets/networks.json)
 cast block-number --rpc-url "$RPC_URL"
 
-# 5. Smoke-test the CLI on a native asset (no address needed)
+# 7. Smoke-test the CLI on a native asset (no address needed)
 ./examples/score.sh native:PROS mainnet
 ```
 
@@ -181,10 +199,11 @@ There are no migrations between LCP versions yet; the output schema
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `Missing required binary: cast` | Foundry not on `PATH` | Re-run `foundryup`, then `source ~/.bashrc` / open a new shell |
-| `jq: command not found` | `jq` not installed | `brew install jq` (macOS) or `apt install jq` (Debian/Ubuntu) |
-| `RPC unreachable: https://rpc.pharos.xyz` | No outbound HTTPS, or the RPC is down | Test with `curl -I https://rpc.pharos.xyz`; switch to `atlantic-testnet` for development |
-| `Refusing to run: $PRIVATE_KEY is set` | You have a wallet env var set | `unset PRIVATE_KEY` for the LCP session. LCP is read-only and must not see keys |
+| `Missing required binary: cast` | Foundry not on `PATH` | `foundryup`, then `source ~/.bashrc` / open a new shell. LCP is Foundry-first; this is the only mandatory binary. |
+| `forge test` fails | Foundry version mismatch | Use `foundryup` to install the latest stable. The skill is tested with Foundry ≥ 1.0.0. |
+| `jq: command not found` | `jq` not installed | `brew install jq` (macOS) or `apt install jq` (Debian/Ubuntu). Required only for JSON output. |
+| `RPC unreachable: https://rpc.pharos.xyz` | No outbound HTTPS, or the RPC is down | Test with `curl -I https://rpc.pharos.xyz`; switch to `atlantic-testnet` for development, or set `LCP_RPC_URL` to a local `anvil` instance. |
+| `Refusing to run: $PRIVATE_KEY is set` | You have a wallet env var set | `unset PRIVATE_KEY` for the LCP session. LCP is read-only and must not see keys. |
 | `Unknown network: foo` | Typo in network name | Use exactly `mainnet` or `atlantic-testnet` (see `assets/networks.json`) |
 | `Invalid address: 0x...` | Not a 20-byte hex address | Re-check; the native assets are `native:PROS` and `native:PHRS`, not `0x...` |
 | Skill not listed in `/skills` | Wrong path, wrong folder name | Folder must be `LCP` (capital LCP) directly under the skills root |
@@ -195,7 +214,7 @@ There are no migrations between LCP versions yet; the output schema
 ```bash
 # Remove the skill copy
 rm -rf ~/.claude/skills/LCP          # or whichever path you used
-# The four required binaries (Foundry, jq, bc) can stay; other tools use them too.
+# Foundry and jq can stay; other tools use them too.
 ```
 
 ## Usage

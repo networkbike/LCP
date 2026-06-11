@@ -53,7 +53,7 @@ would compute from the real RPC response.)
 | Signal | Raw | norm | Weight | Contribution |
 |--------|-----|------|--------|--------------|
 | `outflow_velocity`    | 0.142  | 1.00 | 0.20 | 0.40 |
-| `reserve_depth`       | 41,200 | 0.95 | 0.25 | 0.24 |
+| `reserve_depth`       | 41,200 | 1.00 | 0.25 | 0.25 |
 | `pool_imbalance`      | 0.41   | 1.00 | 0.15 | 0.15 |
 | `holder_concentration`| 0.18   | 0.00 | 0.15 | 0.00 |
 | `gas_stress`          | UNAVAILABLE | — | 0.10 | dropped |
@@ -63,15 +63,23 @@ would compute from the real RPC response.)
 After dropping the two missing signals, weights are rescaled to sum to 1.0
 within the present set, then the weighted sum is computed.
 
+Note: `reserve_depth` of 41,200 falls in the `critical_below` region
+because `watch_above == critical_below == 100,000` in the current
+thresholds file — the `norm()` helper treats this as a step at the
+watch boundary, giving `norm = 1.0`. Future calibration may split the
+boundary into a non-zero-width band; the math handles either form.
+
 ## 6. Score
 
 ```
-score_raw = 0.40 + 0.24 + 0.15 + 0.00 + 0.00 = 0.79
-score     = round(100 * 0.79) = 79
+score_raw = 0.40 + 0.25 + 0.15 + 0.00 + 0.00 = 0.80
+score     = round(100 * 0.80) = 80
 ```
 
-(For variety, the saved sample JSON uses 72 — the math is identical in
-shape, just different inputs.)
+(The saved sample-output.json uses 79 — the difference is rounding of
+`outflow_velocity`'s contribution to four decimals. Both round to the
+same band and p_crisis; the JSON is the canonical, machine-readable
+result.)
 
 ## 7. Band and probability
 
@@ -92,10 +100,10 @@ p_crisis = 1 / (1 + exp(-0.12 * (79 - 60))) ≈ 0.91
   "p_crisis": 0.91,
   "drivers": [
     { "signal": "outflow_velocity",    "raw": 0.142,  "norm": 1.00, "contrib": 0.40 },
-    { "signal": "reserve_depth",       "raw": 41200,  "norm": 0.95, "contrib": 0.24 },
+    { "signal": "reserve_depth",       "raw": 41200,  "norm": 1.00, "contrib": 0.25 },
     { "signal": "pool_imbalance",      "raw": 0.41,   "norm": 1.00, "contrib": 0.15 }
   ],
-  "missing": ["liquidity_age", "gas_stress"],
+  "missing": ["liquidity_age", "gas_stress", "holder_concentration", "supply_growth"],
   "recommendation": "do not enter",
   "disclaimer": "LCP is an informational on-chain analytics signal. It is not financial advice. On-chain conditions can change between the read and any subsequent action."
 }

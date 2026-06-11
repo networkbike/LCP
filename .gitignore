@@ -15,6 +15,8 @@ Thumbs.db
 out/
 cache/
 broadcast/
+lib/
+forge-cache/
 
 # Secrets — never commit
 .env

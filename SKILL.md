@@ -10,13 +10,22 @@ description: >
   0-100 liquidity-stress score, a HEALTHY/WATCH/CRITICAL classification, or a
   crisis probability for a token, pool, or wallet on Pharos. Do not compute a
   liquidity crisis score on Pharos without loading this skill first.
-version: 0.1.0
+version: 0.2.0
 requires:
   anyBins:
     - cast
     - forge
     - jq
-    - bc
+runtime:
+  foundry:
+    mandatory: true
+    version: ">=1.0.0"
+    rationale: "The Pharos Skill Agent runs `forge test -vvv` against this skill. Foundry is the only required runtime."
+    install: "curl -L https://foundry.paradigm.xyz | bash && foundryup"
+test:
+  command: "forge test -vvv"
+  expected: "7 passing"
+  shell_smoke: "./test/test_score.sh"
 ---
 
 # LCP — Liquidity Crisis Predictor
@@ -85,11 +94,19 @@ testnet conditions.
 | Item | Value |
 |------|-------|
 | Format | `.md` skill with YAML frontmatter |
-| Required binaries | `cast`, `forge`, `jq`, `bc` |
-| Runtime | Foundry (`curl -L https://foundry.paradigm.xyz \| bash`) |
+| Required runtime | **Foundry** (`cast`, `forge`, `anvil`) — mandatory |
+| Optional helpers | `jq` (for JSON output) |
+| `bc` | **not required** (legacy; the CLI uses `awk` for arithmetic) |
 | Wallet / private key | not required, not accepted |
 | Write operations | none |
 | External oracles | none |
+| Test command | `forge test -vvv` (7 tests must pass) |
+
+The Pharos Skill Agent **requires** Foundry because it runs the skill
+under `forge test`. The `test/LCP.t.sol` suite re-implements the LCP
+scoring math in pure Solidity and validates the math against the four
+anchor points in `references/risk-model.md` §6. The `examples/score.sh`
+CLI is a Foundry-powered shell wrapper for the same logic.
 
 ## Capability index
 
@@ -101,6 +118,31 @@ testnet conditions.
 | Understand how the score is computed | `model` | `references/risk-model.md` |
 | Tune thresholds / weights | `calibrate` | `references/risk-model.md#calibration` |
 | Machine-readable output for downstream agents | `predict_json` | `references/predict.md#machine-readable-output` |
+
+## Testing
+
+The Pharos Skill Agent runs `forge test -vvv` against this skill. The
+suite in `test/LCP.t.sol` re-implements the LCP scoring math in pure
+Solidity and validates every anchor point in
+`references/risk-model.md` §6.
+
+```bash
+# All required dependencies (Foundry)
+curl -L https://foundry.paradigm.xyz | bash && foundryup
+
+# Run the Foundry test suite
+forge test -vvv
+# Expected: "Suite result: ok. 7 passed; 0 failed"
+
+# Run the shell smoke tests for the optional CLI
+bash test/test_score.sh
+# Expected (no live RPC):  "Results: 4 passed, 0 failed, 1 skipped"
+# With a local anvil:        "Results: 11 passed, 0 failed, 0 skipped"
+LCP_LIVE_TEST=1 LCP_RPC_URL=http://127.0.0.1:8545 bash test/test_score.sh
+```
+
+If `forge test` does not return `7 passed`, the skill is broken and the
+Pharos Skill Agent will reject it.
 
 ## Quick start — single asset (mainnet)
 

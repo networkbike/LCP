@@ -143,12 +143,21 @@ AGE=$((LATEST - FIRST_BLOCK))
 ```bash
 GAS_NOW=$(cast gas-price --rpc-url "$RPC_URL")
 
-# Approximate rolling median from last 200 blocks
-SAMPLES=$(for b in $(seq $((LATEST-200)) $LATEST); do
+# Approximate rolling median from the last 200 blocks. We must clamp
+# the start block to 0 (chains with fewer than 200 blocks still work)
+# and we must NOT wrap a no-op `awk` around the sorted stream — the
+# pre-`examples/score.sh` v0.1.0 recipe was broken on that step.
+GAS_START=$(( LATEST > 200 ? LATEST - 200 : 0 ))
+SAMPLES=$(for b in $(seq "$GAS_START" "$LATEST"); do
   cast block "$b" --field baseFeePerGas --rpc-url "$RPC_URL"
 done | sort -n)
-MEDIAN=$(echo "$SAMPLES" | awk 'NR==FNR{a[NR]=$1;n=NR;next}' | awk -v n=200 'NR==int(n/2)')
-RATIO=$(echo "scale=4; $GAS_NOW / $MEDIAN" | bc -l)
+MEDIAN=$(printf '%s\n' "$SAMPLES" | awk '
+  { a[NR] = $1 }
+  END { if (NR == 0) print 0; else print a[int((NR + 1) / 2)] }
+')
+# `gas_stress = current / median` (a ratio). Use awk — `bc` is not
+# required by the skill and is being phased out.
+RATIO=$(awk -v n="$GAS_NOW" -v m="$MEDIAN" 'BEGIN{ printf "%.4f", n / m }')
 ```
 
 For testnet where gas is typically zero, `gas_stress` collapses to `0.0`
