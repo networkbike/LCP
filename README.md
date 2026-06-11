@@ -31,8 +31,8 @@ run looks like:
 ```
 
 If both test commands pass, the skill is ready for the Pharos Skill Agent
-to grade. See [§ Installation](#installation) for the full guide,
-including a Termux (Android) recipe and a manual fallback.
+to grade. See [§ Installation](#installation) for the full guide and a
+manual fallback.
 
 ---
 
@@ -142,9 +142,9 @@ If both test commands pass, the skill is correctly installed and the
 Pharos Skill Agent will accept it.
 
 Supported platforms: **Linux** (Debian, Ubuntu, Alpine, Arch, RHEL family),
-**macOS** (Homebrew), **Termux** (auto-detected — see §Termux below). On
-unknown platforms it prints a warning and continues with whatever
-package manager it could detect.
+**macOS** (Homebrew), and other Unix-like systems that have `apt`/`apk`/
+`pacman`/`dnf`/`brew` available. On unknown platforms it prints a warning
+and continues with whatever package manager it could detect.
 
 ### 1. Prerequisites (manual fallback)
 
@@ -229,56 +229,6 @@ LCP_LIVE_TEST=1 LCP_RPC_URL=http://127.0.0.1:8545 bash test/test_score.sh
 ./examples/score.sh native:PROS mainnet
 ```
 
-### Termux (Android)
-
-Foundry ships glibc-linked binaries that don't run on Android's Bionic
-libc. The cleanest path is to run LCP inside a **proot-distro Debian**
-rootfs. Paste these into Termux:
-
-```bash
-# 1. Set up Termux
-pkg update -y && pkg upgrade -y
-pkg install -y git curl proot-distro
-
-# 2. Install Debian under proot
-proot-distro install debian
-
-# 3. Log into Debian
-proot-distro login debian
-```
-
-**Everything below runs inside the proot session.** Each proot session is
-fresh, so re-export PATH on every login:
-
-```bash
-# 4. Inside proot-Debian: install OS deps
-apt-get update && apt-get install -y git curl ca-certificates jq build-essential
-
-# 5. Install Foundry
-curl -L https://foundry.paradigm.xyz | bash
-export PATH="$HOME/.foundry/bin:$PATH"
-foundryup
-echo 'export PATH="$HOME/.foundry/bin:$PATH"' >> ~/.bashrc
-
-# 6. Clone LCP and run the installer
-cd ~
-git clone https://github.com/networkbike/LCP.git
-cd LCP
-chmod +x install.sh
-./install.sh
-```
-
-When you want to use LCP again later, just run:
-```bash
-proot-distro login debian
-export PATH="$HOME/.foundry/bin:$PATH"
-cd ~/LCP
-forge test -vvv
-```
-
-The `./install.sh` script auto-detects Termux and prints a clear message
-pointing you here if you try to install Foundry directly without proot.
-
 ### Updating
 
 ```bash
@@ -307,7 +257,6 @@ There are no migrations between LCP versions yet; the output schema
 | `Invalid address: 0x...` | Not a 20-byte hex address | Re-check; the native assets are `native:PROS` and `native:PHRS`, not `0x...` |
 | Skill not listed in `/skills` | Wrong path, wrong folder name | Folder must be `LCP` (capital LCP) directly under the skills root |
 | `cast logs` returns `[]` for a brand-new token | No `Transfer` events in the lookback window | Expected. `outflow_velocity` is set to `0` and listed in `missing` |
-| Foundry won't install in Termux | glibc vs Bionic libc | Use `proot-distro install debian` first (see §Termux above) |
 | Installer reports "Unknown platform" | OS not in the auto-detect list | Install `git`, `curl`, `jq`, `build-essential` manually, then re-run with `--skip-forge` |
 
 ### Uninstall

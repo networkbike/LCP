@@ -18,7 +18,7 @@
 # Supported platforms (auto-detected):
 #   - Linux  (Debian/Ubuntu, Alpine, Arch, RHEL family)
 #   - macOS  (via Homebrew)
-#   - Termux (via proot-distro Debian; auto-detected)
+#   - Other Unix-like systems (auto-detect falls back to a warning)
 #
 # Exit codes:
 #   0  — success, all checks passed
@@ -69,6 +69,8 @@ elif [[ "$OS" == "Darwin" ]]; then
 fi
 
 # Termux detection — when $PREFIX is set, we're inside Termux's userland.
+# Foundry needs glibc; on Termux (Bionic libc) we route through
+# proot-distro Debian so the rest of the script can run unchanged.
 if [[ -n "${PREFIX:-}" && "$PREFIX" == */com.termux/* ]]; then
   TERMUX=1
   PKG_MGR="pkg"
@@ -80,6 +82,32 @@ log()  { printf "\033[36m[install]\033[0m %s\n" "$*"; }
 warn() { printf "\033[33m[install]\033[0m %s\n" "$*" >&2; }
 fail() { printf "\033[31m[install]\033[0m %s\n" "$*" >&2; exit "${2:-1}"; }
 ok()   { printf "\033[32m[install]\033[0m %s\n" "$*"; }
+
+# --- Termux auto-routing -----------------------------------------------------
+# Foundry requires glibc; the userland on Android phones is Bionic libc
+# and cannot load Foundry's binaries. We transparently re-launch the
+# install inside a proot-distro Debian rootfs so the rest of the script
+# runs unchanged. The marker env var prevents infinite re-entry.
+if [[ $TERMUX -eq 1 && -z "${LCP_INSIDE_PROOT:-}" ]]; then
+  log "Detected Android userland. Routing install through proot-distro (Foundry needs glibc)."
+  command -v proot-distro >/dev/null 2>&1 || {
+    log "  installing proot-distro"
+    pkg install -y proot-distro
+  }
+  if ! proot-distro list 2>/dev/null | grep -q debian; then
+    log "  installing Debian rootfs (one-time, ~150 MB)"
+    proot-distro install debian
+  fi
+  log "  re-running this script inside proot-distro Debian."
+  # proot-distro bind-mounts the Termux filesystem under /data, so the
+  # script's absolute path is preserved as long as we resolve it before
+  # re-exec.
+  SCRIPT_ABS="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  ARGS=""
+  for a in "$@"; do ARGS="$ARGS $(printf '%q' "$a")"; done
+  exec proot-distro login debian -- env LCP_INSIDE_PROOT=1 \
+    /bin/bash -lc "cd /root && '$SCRIPT_ABS' $ARGS"
+fi
 
 # --- Step 1: System dependencies ---------------------------------------------
 log "Step 1/6: system dependencies"
@@ -106,11 +134,11 @@ case "$PKG_MGR" in
     brew install git curl jq
     ;;
   pkg)
+    # Host userland when on Android; the heavy install is being routed
+    # to proot-distro Debian by the auto-routing block above. Only need
+    # the basic CLI helpers here.
     pkg update -y
-    pkg install -y git curl jq proot-distro
-    warn "Termux detected. Foundry requires glibc; install it under proot-distro Debian."
-    warn "After this script finishes, run: proot-distro install debian && proot-distro login debian"
-    warn "Then re-run this script inside the proot session. See README.md §Termux."
+    pkg install -y git curl jq
     ;;
   *)
     warn "Unknown platform (OS=$OS, DISTRO=$DISTRO)."
@@ -125,9 +153,6 @@ if [[ $SKIP_FORGE -eq 0 ]]; then
   if command -v cast >/dev/null 2>&1 && command -v forge >/dev/null 2>&1; then
     ok "Foundry already on PATH (cast=$(command -v cast), forge=$(command -v forge))"
   else
-    if [[ $TERMUX -eq 1 ]]; then
-      fail "Foundry cannot be installed directly in Termux. Use proot-distro Debian." 1
-    fi
     log "  downloading foundryup"
     curl -L https://foundry.paradigm.xyz | bash
     log "  running foundryup (downloads cast / forge / anvil)"
