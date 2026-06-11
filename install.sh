@@ -128,15 +128,31 @@ case "$PKG_MGR" in
     # downloads the official static solc release tarball. Falls back
     # gracefully if pip or network is unavailable.
     if ! command -v solc >/dev/null 2>&1; then
-      log "  installing solc 0.8.20 (Solidity compiler)"
-      $SUDO apt-get install -y python3-pip 2>/dev/null || true
-      $SUDO pip3 install --break-system-packages solc-select 2>/dev/null \
-        || $SUDO pip3 install solc-select 2>/dev/null || true
-      $SUDO solc-select install 0.8.20 2>/dev/null || true
-      $SUDO solc-select use 0.8.20 2>/dev/null || true
-      if ! command -v solc >/dev/null 2>&1; then
-        warn "  solc install via solc-select failed; forge test may still fail on ARM64."
-        warn "  Try: pip3 install --user solc-select && ~/.local/bin/solc-select install 0.8.20"
+      # On Linux x86_64 forge ships a working bundled solc, but on
+      # arm64 (Termux proot, Raspberry Pi, Graviton) the bundled
+      # solc-bin can't load. We download a static solc directly from
+      # the official Solidity binaries mirror and put it in
+      # /usr/local/bin. Both amd64 and arm64 builds of 0.8.31+ are
+      # available there, and our foundry.toml pins solc = "0.8.31".
+      ARCH="$(uname -m)"
+      case "$ARCH" in
+        x86_64|amd64)   SOLC_ARCH="linux-amd64" ;;
+        aarch64|arm64)  SOLC_ARCH="linux-arm64" ;;
+        *)              SOLC_ARCH="" ;;
+      esac
+      if [[ -n "$SOLC_ARCH" ]]; then
+        log "  downloading solc 0.8.31 ($SOLC_ARCH static binary)"
+        SOLC_URL="https://binaries.soliditylang.org/${SOLC_ARCH}/solc-${SOLC_ARCH}-v0.8.31+commit.fd3a2265"
+        if curl -fsSL "$SOLC_URL" -o /tmp/solc-static 2>/dev/null; then
+          $SUDO install -m 0755 /tmp/solc-static /usr/local/bin/solc
+          rm -f /tmp/solc-static
+          if command -v solc >/dev/null 2>&1; then
+            ok "  solc 0.8.31 installed at /usr/local/bin/solc"
+          fi
+        else
+          warn "  failed to download solc from $SOLC_URL"
+          warn "  forge test will fail until solc is available."
+        fi
       fi
     fi
     ;;
