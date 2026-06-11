@@ -127,7 +127,12 @@ Solidity and validates every anchor point in
 `references/risk-model.md` §6.
 
 ```bash
-# All required dependencies (Foundry)
+# All-in-one install + verify
+./install.sh
+# This installs Foundry, jq, forge-std, runs forge test (must show 7 passed),
+# and runs the shell smoke test (must show 4 passed, 1 skipped).
+
+# Or, manually:
 curl -L https://foundry.paradigm.xyz | bash && foundryup
 
 # Run the Foundry test suite

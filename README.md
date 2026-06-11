@@ -11,6 +11,31 @@ oracle. It does not require a private key.
 
 ---
 
+## Quick install
+
+```bash
+git clone https://github.com/networkbike/LCP.git
+cd LCP
+chmod +x install.sh
+./install.sh
+```
+
+The installer is self-contained: it detects your platform, installs
+Foundry + jq + forge-std, makes the CLI executable, and runs `forge test
+-vvv` plus `bash test/test_score.sh` to confirm the skill works. A green
+run looks like:
+
+```
+[install] forge test: 7 passed; 0 failed
+[install] shell smoke test passed
+```
+
+If both test commands pass, the skill is ready for the Pharos Skill Agent
+to grade. See [§ Installation](#installation) for the full guide,
+including a Termux (Android) recipe and a manual fallback.
+
+---
+
 ## Overview
 
 Given a target (token, pool, or `native:PHRS` / `native:PROS`) on a Pharos
@@ -64,6 +89,7 @@ LCP/
 ├── SKILL.md                    # skill manifest (frontmatter + body)
 ├── README.md                   # this file
 ├── LICENSE                     # MIT
+├── install.sh                  # one-shot installer (auto-detects platform)
 ├── foundry.toml                # Foundry config (for `forge test`)
 ├── src/
 │   └── MockERC20.sol           # minimal ERC-20 used by forge tests
@@ -88,27 +114,54 @@ LCP/
 
 ## Installation
 
-LCP is a **drop-in skill bundle**, not an installable package. There is no
-`npm install`, `pip install`, or `cargo build` step. You copy the directory
-into your Agent's skills path and make sure the four required binaries are
-on your `PATH`.
+LCP is a **Foundry-first skill bundle** for the Pharos Skill Agent. There is
+no `npm install` / `pip install` / `cargo build` step. The runtime is
+Foundry (`cast` / `forge` / `anvil`); the test target the agent grades is
+`forge test -vvv`.
 
-### 1. Prerequisites
+### TL;DR — one command, four lines
 
-LCP is **Foundry-first** — the Pharos Skill Agent runs the skill under
-`forge test`, so Foundry is the only required runtime.
+```bash
+git clone https://github.com/networkbike/LCP.git
+cd LCP
+chmod +x install.sh
+./install.sh
+```
 
-| Binary | Purpose | Install |
-|--------|---------|---------|
-| `cast`, `forge`, `anvil` | **Mandatory.** All on-chain reads and the test suite use Foundry. | `curl -L https://foundry.paradigm.xyz \| bash && foundryup` ([book.getfoundry.sh](https://book.getfoundry.sh/getting-started/installation)) |
-| `git`   | clone this repo | [git-scm.com](https://git-scm.com/downloads) |
-| `jq`   | parse JSON output and `cast --json` results | `brew install jq` / `apt install jq` / [stedolan.github.io/jq](https://stedolan.github.io/jq/download/) |
-| `bash` ≥ 4 | only needed for the optional `examples/score.sh` CLI | preinstalled on macOS / most Linux distros |
-| `bc` | **not required** | the CLI uses `awk` for arithmetic |
+`./install.sh` is a self-contained bootstrapper that:
+1. Installs system dependencies (`git`, `curl`, `jq`, build tools) for your
+   platform.
+2. Installs **Foundry** via the official `foundryup` installer and adds it
+   to `~/.bashrc`.
+3. Clones `forge-std` into `lib/`.
+4. Marks the CLI as executable.
+5. Runs `forge test -vvv` — must report `7 passed; 0 failed`.
+6. Runs `bash test/test_score.sh` — must report `4 passed; 0 failed`.
+
+If both test commands pass, the skill is correctly installed and the
+Pharos Skill Agent will accept it.
+
+Supported platforms: **Linux** (Debian, Ubuntu, Alpine, Arch, RHEL family),
+**macOS** (Homebrew), **Termux** (auto-detected — see §Termux below). On
+unknown platforms it prints a warning and continues with whatever
+package manager it could detect.
+
+### 1. Prerequisites (manual fallback)
+
+If you prefer to install things by hand — or if `./install.sh` failed and
+you want to know what to check — the runtime is just Foundry + jq:
+
+| Binary | Required? | Install |
+|--------|-----------|---------|
+| `cast`, `forge`, `anvil` | **Yes** — mandatory | `curl -L https://foundry.paradigm.xyz \| bash && foundryup` |
+| `git`     | Yes | usually preinstalled; `apt install git` / `brew install git` |
+| `jq`      | Yes (for JSON output) | `apt install jq` / `brew install jq` |
+| `bash` ≥ 4 | Yes (for the CLI) | preinstalled on macOS / most Linux |
+| `bc`      | **No** (legacy — the CLI uses `awk`) | — |
 
 You also need **outbound HTTPS** to the Pharos RPC endpoints listed in
-`assets/networks.json` (e.g. `https://rpc.pharos.xyz` for mainnet), OR a
-local Foundry `anvil` instance for testing.
+`assets/networks.json` (e.g. `https://rpc.pharos.xyz` for mainnet), **or**
+a local Foundry `anvil` instance for the live tests.
 
 You do **not** need a wallet, a private key, a seed phrase, or any API
 token. LCP is read-only and will refuse to run if `$PRIVATE_KEY` is set in
@@ -121,35 +174,40 @@ git clone https://github.com/networkbike/LCP.git
 cd LCP
 ```
 
-### 3. Drop the skill into your Agent's skills path
+### 3. Run the installer
 
-Copy (or symlink) the `LCP/` directory into whichever skills directory your
-Agent framework reads. The skill's folder name **must** be `LCP` (case
-sensitive) so the YAML `name: liquidity-crisis-predictor` in
-`SKILL.md` can resolve it.
+```bash
+chmod +x install.sh
+./install.sh
+```
+
+Flags:
+- `--skip-forge` — don't re-install Foundry if it's already present.
+- `--skip-verify` — install everything but don't run the test suite.
+
+### 4. Drop the skill into your Agent's skills path (optional)
+
+If you're loading the skill into an Agent framework (OpenClaw, Claude
+Code, Codex, or a project-level skills folder), copy or symlink the
+`LCP/` directory. The folder name **must** be `LCP` (case sensitive) so
+the YAML `name: liquidity-crisis-predictor` in `SKILL.md` can resolve it.
 
 | Framework | Skills path | Install command |
 |-----------|-------------|-----------------|
-| OpenClaw  | `~/.openclaw/skills/LCP/` | `cp -R LCP ~/.openclaw/skills/LCP` |
-| Claude Code | `~/.claude/skills/LCP/` | `cp -R LCP ~/.claude/skills/LCP` |
-| Codex     | `~/.codex/skills/LCP/` | `cp -R LCP ~/.codex/skills/LCP` |
-| Project-level (shared with a repo) | `<your-project>/skills/LCP/` | `mkdir -p <your-project>/skills && cp -R LCP <your-project>/skills/LCP` |
+| OpenClaw  | `~/.openclaw/skills/LCP/` | `cp -R . ~/.openclaw/skills/LCP` |
+| Claude Code | `~/.claude/skills/LCP/` | `cp -R . ~/.claude/skills/LCP` |
+| Codex     | `~/.codex/skills/LCP/` | `cp -R . ~/.codex/skills/LCP` |
+| Project-level (shared with a repo) | `<your-project>/skills/LCP/` | `mkdir -p <your-project>/skills && cp -R . <your-project>/skills/LCP` |
 
 > Prefer a **symlink** if you plan to pull upstream changes frequently:
-> `ln -s "$(pwd)/LCP" ~/.claude/skills/LCP`
+> `ln -s "$(pwd)" ~/.claude/skills/LCP`
 
-### 4. Make the optional CLI executable
-
-`examples/score.sh` is a standalone scorer that does not require an Agent
-runtime. Make it executable the first time you use it:
-
-```bash
-chmod +x examples/score.sh
-```
+> The Pharos Skill Agent does not need this step — it reads the skill
+> directly from the repository root.
 
 ### 5. Verify
 
-Run these one-liners to confirm everything is in place:
+After `./install.sh` finishes, run these one-liners to confirm:
 
 ```bash
 # 1. Required binaries (Foundry is the only mandatory one)
@@ -158,39 +216,79 @@ for b in cast forge jq; do command -v "$b" >/dev/null && echo "OK  $b" || echo "
 # 2. Skill files present
 ls SKILL.md assets/networks.json assets/lcp-thresholds.json
 
-# 3. Run the Foundry test suite — this is what the Pharos Skill Agent runs
+# 3. The Pharos Skill Agent's grading target — MUST report 7 passed
 forge test -vvv
-# Expected: "Suite result: ok. 7 passed; 0 failed"
 
-# 4. Run the shell smoke tests for the CLI
+# 4. Shell smoke test for the CLI — MUST report 4 passed, 1 skipped
 bash test/test_score.sh
-# Expected: "Results: 4 passed, 0 failed, 1 skipped"  (live test skipped by default)
 
-# 5. Skill is loaded (framework-specific)
-# OpenClaw
-openclaw skills list | grep liquidity-crisis-predictor
-# Claude Code / Codex
-/skills
+# 5. (Optional) live ERC-20 path — requires anvil running on :8545
+LCP_LIVE_TEST=1 LCP_RPC_URL=http://127.0.0.1:8545 bash test/test_score.sh
 
-# 6. Reach the Pharos RPC
-RPC_URL=$(jq -r '.networks[] | select(.name=="mainnet") | .rpcUrl' assets/networks.json)
-cast block-number --rpc-url "$RPC_URL"
-
-# 7. Smoke-test the CLI on a native asset (no address needed)
+# 6. Smoke-test the CLI on a native asset (no address needed)
 ./examples/score.sh native:PROS mainnet
 ```
 
-A successful first run prints a human-readable report with a score, a band,
-`p_crisis`, three drivers, and the fixed disclaimer.
+### Termux (Android)
+
+Foundry ships glibc-linked binaries that don't run on Android's Bionic
+libc. The cleanest path is to run LCP inside a **proot-distro Debian**
+rootfs. Paste these into Termux:
+
+```bash
+# 1. Set up Termux
+pkg update -y && pkg upgrade -y
+pkg install -y git curl proot-distro
+
+# 2. Install Debian under proot
+proot-distro install debian
+
+# 3. Log into Debian
+proot-distro login debian
+```
+
+**Everything below runs inside the proot session.** Each proot session is
+fresh, so re-export PATH on every login:
+
+```bash
+# 4. Inside proot-Debian: install OS deps
+apt-get update && apt-get install -y git curl ca-certificates jq build-essential
+
+# 5. Install Foundry
+curl -L https://foundry.paradigm.xyz | bash
+export PATH="$HOME/.foundry/bin:$PATH"
+foundryup
+echo 'export PATH="$HOME/.foundry/bin:$PATH"' >> ~/.bashrc
+
+# 6. Clone LCP and run the installer
+cd ~
+git clone https://github.com/networkbike/LCP.git
+cd LCP
+chmod +x install.sh
+./install.sh
+```
+
+When you want to use LCP again later, just run:
+```bash
+proot-distro login debian
+export PATH="$HOME/.foundry/bin:$PATH"
+cd ~/LCP
+forge test -vvv
+```
+
+The `./install.sh` script auto-detects Termux and prints a clear message
+pointing you here if you try to install Foundry directly without proot.
 
 ### Updating
 
 ```bash
 cd LCP                       # or wherever you cloned it
 git pull --ff-only
-# If you copied instead of symlinking, re-copy:
-#   cp -R LCP ~/.claude/skills/LCP
+./install.sh --skip-forge    # re-runs the test gates; nothing else to do
 ```
+
+If you copied (not symlinked) the skill into an Agent's skills path, copy
+again: `cp -R LCP ~/.claude/skills/LCP`.
 
 There are no migrations between LCP versions yet; the output schema
 (`lcp.result.v1`) and the seven-signal contract are stable.
@@ -199,15 +297,18 @@ There are no migrations between LCP versions yet; the output schema
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `Missing required binary: cast` | Foundry not on `PATH` | `foundryup`, then `source ~/.bashrc` / open a new shell. LCP is Foundry-first; this is the only mandatory binary. |
-| `forge test` fails | Foundry version mismatch | Use `foundryup` to install the latest stable. The skill is tested with Foundry ≥ 1.0.0. |
-| `jq: command not found` | `jq` not installed | `brew install jq` (macOS) or `apt install jq` (Debian/Ubuntu). Required only for JSON output. |
-| `RPC unreachable: https://rpc.pharos.xyz` | No outbound HTTPS, or the RPC is down | Test with `curl -I https://rpc.pharos.xyz`; switch to `atlantic-testnet` for development, or set `LCP_RPC_URL` to a local `anvil` instance. |
+| `./install.sh: Permission denied` | `install.sh` is not executable | `chmod +x install.sh` (the install script does this for you) |
+| `Missing required binary: cast` | Foundry not on `PATH` | `source ~/.bashrc` or `export PATH="$HOME/.foundry/bin:$PATH"` |
+| `forge test` fails | Foundry version mismatch or `lib/forge-std` missing | `foundryup` to update; `./install.sh` re-clones `forge-std` |
+| `jq: command not found` | `jq` not installed | `apt install jq` / `brew install jq` |
+| `RPC unreachable: https://rpc.pharos.xyz` | No outbound HTTPS, or the RPC is down | Test with `curl -I https://rpc.pharos.xyz`; switch to `atlantic-testnet` for development, or set `LCP_RPC_URL` to a local `anvil` instance |
 | `Refusing to run: $PRIVATE_KEY is set` | You have a wallet env var set | `unset PRIVATE_KEY` for the LCP session. LCP is read-only and must not see keys. |
 | `Unknown network: foo` | Typo in network name | Use exactly `mainnet` or `atlantic-testnet` (see `assets/networks.json`) |
 | `Invalid address: 0x...` | Not a 20-byte hex address | Re-check; the native assets are `native:PROS` and `native:PHRS`, not `0x...` |
 | Skill not listed in `/skills` | Wrong path, wrong folder name | Folder must be `LCP` (capital LCP) directly under the skills root |
 | `cast logs` returns `[]` for a brand-new token | No `Transfer` events in the lookback window | Expected. `outflow_velocity` is set to `0` and listed in `missing` |
+| Foundry won't install in Termux | glibc vs Bionic libc | Use `proot-distro install debian` first (see §Termux above) |
+| Installer reports "Unknown platform" | OS not in the auto-detect list | Install `git`, `curl`, `jq`, `build-essential` manually, then re-run with `--skip-forge` |
 
 ### Uninstall
 
