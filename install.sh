@@ -102,16 +102,28 @@ if [[ $TERMUX -eq 1 && -z "${LCP_INSIDE_PROOT:-}" ]]; then
     log "  installing Debian rootfs (one-time, ~150 MB)"
     proot-distro install debian
   fi
+  # Wipe any leftover Termux-side foundry from previous manual installs.
+  # The Bionic-linked binaries there always break with 'TLS segment
+  # underaligned' when loaded by glibc, so we delete them outright.
+  if [[ -d "$HOME/.foundry" ]]; then
+    log "  removing pre-existing Termux-side foundry at $HOME/.foundry"
+    rm -rf "$HOME/.foundry" 2>/dev/null || true
+  fi
   log "  re-running this script inside proot-distro Debian."
-  # proot-distro bind-mounts the Termux filesystem under /data, so the
-  # script's absolute path is preserved as long as we resolve it before
-  # re-exec.
   SCRIPT_ABS="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
   ARGS=""
   for a in "$@"; do ARGS="$ARGS $(printf '%q' "$a")"; done
+  # Re-exec inside the proot. The proot's /root maps to the proot's
+  # own rootfs (NOT Termux's $HOME), so we operate inside the proot
+  # at /root/LCP. After the proot exits, the user enters the proot
+  # again to use the skill: 'proot-distro login debian' -> ~/LCP.
   exec proot-distro login debian -- env LCP_INSIDE_PROOT=1 \
     /bin/bash -lc "cd /root && '$SCRIPT_ABS' $ARGS"
 fi
+
+# We're now inside the proot. The proot's /root is the proot's own
+# rootfs HOME; everything the install writes is at /root/LCP inside
+# the proot. The user accesses the skill from inside the proot.
 
 # --- Step 1: System dependencies ---------------------------------------------
 log "Step 1/6: system dependencies"
@@ -210,9 +222,14 @@ if [[ $SKIP_FORGE -eq 0 ]]; then
     "$HOME/.foundry/bin/foundryup"
     # foundryup installs to $FOUNDRY_DIR/bin; ensure it's on PATH.
     if [[ -x "$FOUNDRY_DIR/bin/forge" ]]; then
-      ln -sf "$FOUNDRY_DIR/bin/cast"  /usr/local/bin/cast  2>/dev/null || true
-      ln -sf "$FOUNDRY_DIR/bin/forge" /usr/local/bin/forge 2>/dev/null || true
-      ln -sf "$FOUNDRY_DIR/bin/anvil" /usr/local/bin/anvil 2>/dev/null || true
+      # Copy (not symlink) into /usr/local/bin. Symlinks can confuse
+      # glibc 2.34+'s __libc_init when it reads /proc/self/exe, which
+      # is a known issue under proot-distro. A real file at the path
+      # works cleanly.
+      cp -f "$FOUNDRY_DIR/bin/cast"  /usr/local/bin/cast  2>/dev/null || true
+      cp -f "$FOUNDRY_DIR/bin/forge" /usr/local/bin/forge 2>/dev/null || true
+      cp -f "$FOUNDRY_DIR/bin/anvil" /usr/local/bin/anvil 2>/dev/null || true
+      chmod +x /usr/local/bin/cast /usr/local/bin/forge /usr/local/bin/anvil 2>/dev/null || true
       export PATH="/usr/local/bin:$PATH"
     else
       # Fallback: foundryup may have used a different layout.
@@ -302,14 +319,16 @@ cat <<'DONE'
 
   LCP install: complete.
 
-  Quick commands:
-    cd LCP
-    forge test -vvv                                 # Foundry test suite (7 passing)
-    bash test/test_score.sh                         # shell smoke test (4 passing, 1 skipped)
-    ./examples/score.sh native:PROS mainnet         # one-shot CLI run
+  Quick commands (re-enter the proot every time you want to use the skill):
+    proot-distro login debian
+    export PATH="/usr/local/bin:\$PATH"
+    cd ~/LCP
+    forge test -vvv                                  # Foundry test suite (7 passing)
+    bash test/test_score.sh                          # shell smoke test (4 passing, 1 skipped)
+    ./examples/score.sh native:PROS mainnet          # one-shot CLI run
 
-  Optional — exercise the live ERC-20 path:
-    anvil --port 8545 &                              # in another shell
+  Optional — exercise the live ERC-20 path (requires anvil):
+    anvil --port 8545 &                              # in another proot shell
     LCP_LIVE_TEST=1 LCP_RPC_URL=http://127.0.0.1:8545 bash test/test_score.sh
                                                       # 11 passing; 0 failed
 
