@@ -177,25 +177,34 @@ if [[ $SKIP_FORGE -eq 0 ]]; then
      && cast --version >/dev/null 2>&1; then
     ok "Foundry already on PATH and working (cast=$(command -v cast), forge=$(command -v forge))"
   else
-    # If a previous install left a half-working foundry (e.g. Termux
-    # manual install with a broken chisel), wipe it so foundryup can
-    # start clean.
-    if [[ -d "$HOME/.foundry/bin" ]]; then
-      log "  removing pre-existing (possibly broken) foundry at $HOME/.foundry/bin"
+    # Install Foundry to /usr/local/bin (or, on the Termux proot,
+    # /usr/local/bin on the proot's own rootfs). This avoids the
+    # bind-mounted /root path that triggers Termux's loader to try
+    # to interpret the glibc binary and fail with 'TLS segment
+    # underaligned'. The foundryup installer honours FOUNDRY_DIR.
+    FOUNDRY_DIR="/usr/local"
+    export FOUNDRY_DIR
+    if [[ -d "$HOME/.foundry" ]]; then
+      log "  removing pre-existing (possibly broken) foundry at $HOME/.foundry"
       rm -rf "$HOME/.foundry" 2>/dev/null || true
     fi
     log "  downloading foundryup"
     curl -L https://foundry.paradigm.xyz | bash
-    log "  running foundryup (downloads cast / forge / anvil)"
-    # foundryup installs to ~/.foundry/bin
-    export PATH="$HOME/.foundry/bin:$PATH"
+    log "  running foundryup (installs to $FOUNDRY_DIR/bin)"
     "$HOME/.foundry/bin/foundryup"
-    if ! command -v cast >/dev/null 2>&1; then
+    # foundryup installs to $FOUNDRY_DIR/bin; ensure it's on PATH.
+    if [[ -x "$FOUNDRY_DIR/bin/forge" ]]; then
+      ln -sf "$FOUNDRY_DIR/bin/cast"  /usr/local/bin/cast  2>/dev/null || true
+      ln -sf "$FOUNDRY_DIR/bin/forge" /usr/local/bin/forge 2>/dev/null || true
+      ln -sf "$FOUNDRY_DIR/bin/anvil" /usr/local/bin/anvil 2>/dev/null || true
+      export PATH="/usr/local/bin:$PATH"
+    else
+      # Fallback: foundryup may have used a different layout.
       export PATH="$HOME/.foundry/bin:$PATH"
     fi
     # Persist for future shells.
-    if [[ -f "$HOME/.bashrc" ]] && ! grep -q '\.foundry/bin' "$HOME/.bashrc"; then
-      printf '\n# Foundry (added by LCP install.sh)\nexport PATH="$HOME/.foundry/bin:$PATH"\n' >> "$HOME/.bashrc"
+    if [[ -f "$HOME/.bashrc" ]] && ! grep -q '/usr/local/bin' "$HOME/.bashrc"; then
+      printf '\n# Foundry (added by LCP install.sh)\nexport PATH="/usr/local/bin:$PATH"\n' >> "$HOME/.bashrc"
     fi
   fi
 else

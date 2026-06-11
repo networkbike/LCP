@@ -248,7 +248,7 @@ There are no migrations between LCP versions yet; the output schema
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | `./install.sh: Permission denied` | `install.sh` is not executable | `chmod +x install.sh` (the install script does this for you) |
-| `Missing required binary: cast` | Foundry not on `PATH` | `source ~/.bashrc` or `export PATH="$HOME/.foundry/bin:$PATH"` |
+| `Missing required binary: cast` | Foundry not on `PATH` | `source ~/.bashrc` or `export PATH="/usr/local/bin:$PATH"` |
 | `forge test` fails | Foundry version mismatch or `lib/forge-std` missing | `foundryup` to update; `./install.sh` re-clones `forge-std` |
 | `jq: command not found` | `jq` not installed | `apt install jq` / `brew install jq` |
 | `RPC unreachable: https://rpc.pharos.xyz` | No outbound HTTPS, or the RPC is down | Test with `curl -I https://rpc.pharos.xyz`; switch to `atlantic-testnet` for development, or set `LCP_RPC_URL` to a local `anvil` instance |

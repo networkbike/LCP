@@ -47,6 +47,16 @@ if [[ -n "${PRIVATE_KEY:-}" ]]; then
   exit 77
 fi
 
+# Validate the target address BEFORE we touch the network, so a malformed
+# address always exits 64 (input error) regardless of RPC health.
+is_native=0
+if [[ "$TARGET" == native:* ]]; then
+  is_native=1
+elif [[ ! "$TARGET" =~ ^0x[0-9a-fA-F]{40}$ ]]; then
+  echo "Invalid address: $TARGET" >&2
+  exit 64
+fi
+
 # Optional: LCP_RPC_URL override (for testing against a local anvil / fork).
 # If set, it wins over the network's RPC URL.
 RPC_OVERRIDE="${LCP_RPC_URL:-}"
@@ -87,15 +97,6 @@ if (( LATEST < WINDOW )); then
   FROM=0
 else
   FROM=$((LATEST - WINDOW))
-fi
-
-# --- Validate target ----------------------------------------------------------
-is_native=0
-if [[ "$TARGET" == native:* ]]; then
-  is_native=1
-elif [[ ! "$TARGET" =~ ^0x[0-9a-fA-F]{40}$ ]]; then
-  echo "Invalid address: $TARGET" >&2
-  exit 64
 fi
 
 # --- Helper: cast call with output sanitized for arithmetic. ------------------
