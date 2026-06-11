@@ -1,41 +1,40 @@
 #!/usr/bin/env bash
 # LCP — One-shot installer
 #
-# Run this on a fresh machine to install everything needed to use and test
-# the LCP skill:
-#   1. Foundry (cast, forge, anvil) — the only mandatory runtime
-#   2. jq (for JSON output)
-#   3. forge-std (LCP test dependency, cloned into lib/)
-#   4. chmod +x the CLI
-#   5. Run `forge test -vvv` to confirm the skill is healthy
-#   6. Run `bash test/test_score.sh` for the CLI smoke tests
+# Run this on a fresh machine to install everything needed to use and
+# test the LCP skill with Foundry (cast / forge / anvil).
 #
 # Usage:
-#   ./install.sh
-#   ./install.sh --skip-forge     # if Foundry is already installed
-#   ./install.sh --skip-verify    # install deps but don't run tests
+#   ./install.sh                       # full install + verify
+#   ./install.sh --skip-verify         # install deps, skip tests
+#   ./install.sh --skip-forge          # install deps but not Foundry
+#   ./install.sh --force               # wipe any pre-existing install
+#                                      # and start clean
 #
 # Supported platforms (auto-detected):
-#   - Linux  (Debian/Ubuntu, Alpine, Arch, RHEL family)
-#   - macOS  (via Homebrew)
-#   - Other Unix-like systems (auto-detect falls back to a warning)
+#   - Linux  (Debian/Ubuntu, Alpine, Arch, RHEL family, Termux proot)
+#   - macOS  (Homebrew)
+#   - Termux (Android): installs the STATIC alpine/arm64 Foundry
+#     directly into Termux's $HOME so no proot is needed at all.
 #
 # Exit codes:
-#   0  — success, all checks passed
+#   0  — success
 #   1  — unsupported platform
-#   2  — required binary missing after install
-#   3  — `forge test` failed (skill is broken)
+#   2  — required binary missing
+#   3  — forge test failed
 #   4  — shell smoke test failed
 
-set -euo pipefail
+set -uo pipefail
 
 # --- Args ---------------------------------------------------------------------
 SKIP_FORGE=0
 SKIP_VERIFY=0
+FORCE=0
 for arg in "$@"; do
   case "$arg" in
     --skip-forge)  SKIP_FORGE=1 ;;
     --skip-verify) SKIP_VERIFY=1 ;;
+    --force)       FORCE=1 ;;
     -h|--help)
       sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
@@ -43,6 +42,12 @@ for arg in "$@"; do
     *) printf "Unknown flag: %s\n" "$arg" >&2; exit 1 ;;
   esac
 done
+
+# --- Logging -------------------------------------------------------------------
+log()  { printf "\033[36m[install]\033[0m %s\n" "$*"; }
+warn() { printf "\033[33m[install]\033[0m %s\n" "$*" >&2; }
+fail() { printf "\033[31m[install]\033[0m %s\n" "$*" >&2; exit "${2:-1}"; }
+ok()   { printf "\033[32m[install]\033[0m %s\n" "$*"; }
 
 # --- Platform detection -------------------------------------------------------
 OS="$(uname -s)"
@@ -68,109 +73,35 @@ elif [[ "$OS" == "Darwin" ]]; then
   PKG_MGR="brew"
 fi
 
-# Termux detection — when $PREFIX is set, we're inside Termux's userland.
-# Foundry needs glibc; on Termux (Bionic libc) we route through
-# proot-distro Debian so the rest of the script can run unchanged.
+# Termux detection.
 if [[ -n "${PREFIX:-}" && "$PREFIX" == */com.termux/* ]]; then
   TERMUX=1
-  PKG_MGR="pkg"
 else
   TERMUX=0
 fi
 
-log()  { printf "\033[36m[install]\033[0m %s\n" "$*"; }
-warn() { printf "\033[33m[install]\033[0m %s\n" "$*" >&2; }
-fail() { printf "\033[31m[install]\033[0m %s\n" "$*" >&2; exit "${2:-1}"; }
-ok()   { printf "\033[32m[install]\033[0m %s\n" "$*"; }
-
-# --- Termux auto-routing -----------------------------------------------------
-# Foundry requires glibc; the userland on Android phones is Bionic libc
-# and cannot load Foundry's binaries. We transparently re-launch the
-# install inside a proot-distro Debian rootfs so the rest of the script
-# runs unchanged. The marker env var prevents infinite re-entry.
-if [[ $TERMUX -eq 1 && -z "${LCP_INSIDE_PROOT:-}" ]]; then
-  log "Detected Android userland. Routing install through proot-distro (Foundry needs glibc)."
-  command -v proot-distro >/dev/null 2>&1 || {
-    log "  installing proot-distro"
-    pkg install -y proot-distro
-  }
-  # Ensure a Debian rootfs exists. 'proot-distro list' output format
-  # varies; rather than parse it, just try to login first, and only
-  # install if that fails. This handles "debian already exists" cleanly
-  # without parsing fragile output.
-  if ! proot-distro login debian -- /bin/true 2>/dev/null; then
-    log "  installing Debian rootfs (one-time, ~150 MB)"
-    proot-distro install debian
-  fi
-  # Wipe any leftover Termux-side foundry from previous manual installs.
-  # The Bionic-linked binaries there always break with 'TLS segment
-  # underaligned' when loaded by glibc, so we delete them outright.
-  if [[ -d "$HOME/.foundry" ]]; then
-    log "  removing pre-existing Termux-side foundry at $HOME/.foundry"
-    rm -rf "$HOME/.foundry" 2>/dev/null || true
-  fi
-  log "  re-running this script inside proot-distro Debian."
-  SCRIPT_ABS="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
-  ARGS=""
-  for a in "$@"; do ARGS="$ARGS $(printf '%q' "$a")"; done
-  # Re-exec inside the proot. The proot's /root maps to the proot's
-  # own rootfs (NOT Termux's $HOME), so we operate inside the proot
-  # at /root/LCP. After the proot exits, the user enters the proot
-  # again to use the skill: 'proot-distro login debian' -> ~/LCP.
-  exec proot-distro login debian -- env LCP_INSIDE_PROOT=1 \
-    /bin/bash -lc "cd /root && '$SCRIPT_ABS' $ARGS"
+# --- Force-clean previous installs -------------------------------------------
+if [[ $FORCE -eq 1 ]]; then
+  log "Force mode: removing any pre-existing installs"
+  for d in "$HOME/.foundry" "$HOME/LCP"; do
+    if [[ -e "$d" ]]; then
+      log "  removing $d"
+      rm -rf "$d" 2>/dev/null || true
+    fi
+  done
 fi
 
-# We're now inside the proot. The proot's /root is the proot's own
-# rootfs HOME; everything the install writes is at /root/LCP inside
-# the proot. The user accesses the skill from inside the proot.
-
-# --- Step 1: System dependencies ---------------------------------------------
+# --- Step 1: System dependencies ----------------------------------------------
 log "Step 1/6: system dependencies"
 case "$PKG_MGR" in
   apt)
     if command -v sudo >/dev/null 2>&1; then SUDO=sudo; else SUDO=""; fi
     $SUDO apt-get update
     $SUDO apt-get install -y git curl ca-certificates jq build-essential
-    # `forge` shells out to the `solc` binary by default. Foundry's
-    # bundled solc-bin works on Linux x86_64, but on ARM64 hosts (e.g.
-    # the Termux proot environment, Raspberry Pi, AWS Graviton) we need
-    # a system `solc` because the bundled one is x86_64 only. If `solc`
-    # isn't already on PATH, install it via pip + solc-select, which
-    # downloads the official static solc release tarball. Falls back
-    # gracefully if pip or network is unavailable.
-    if ! command -v solc >/dev/null 2>&1; then
-      # On Linux x86_64 forge ships a working bundled solc, but on
-      # arm64 (Termux proot, Raspberry Pi, Graviton) the bundled
-      # solc-bin can't load. We download a static solc directly from
-      # the official Solidity binaries mirror and put it in
-      # /usr/local/bin. Both amd64 and arm64 builds of 0.8.31+ are
-      # available there, and our foundry.toml pins solc = "0.8.31".
-      ARCH="$(uname -m)"
-      case "$ARCH" in
-        x86_64|amd64)   SOLC_ARCH="linux-amd64" ;;
-        aarch64|arm64)  SOLC_ARCH="linux-arm64" ;;
-        *)              SOLC_ARCH="" ;;
-      esac
-      if [[ -n "$SOLC_ARCH" ]]; then
-        log "  downloading solc 0.8.31 ($SOLC_ARCH static binary)"
-        SOLC_URL="https://binaries.soliditylang.org/${SOLC_ARCH}/solc-${SOLC_ARCH}-v0.8.31+commit.fd3a2265"
-        if curl -fsSL "$SOLC_URL" -o /tmp/solc-static 2>/dev/null; then
-          $SUDO install -m 0755 /tmp/solc-static /usr/local/bin/solc
-          rm -f /tmp/solc-static
-          if command -v solc >/dev/null 2>&1; then
-            ok "  solc 0.8.31 installed at /usr/local/bin/solc"
-          fi
-        else
-          warn "  failed to download solc from $SOLC_URL"
-          warn "  forge test will fail until solc is available."
-        fi
-      fi
-    fi
     ;;
   apk)
     if command -v sudo >/dev/null 2>&1; then SUDO=sudo; else SUDO=""; fi
-    $SUDO apk add --no-cache git curl ca-certificates jq build-base
+    $SUDO apk add --no-cache git curl ca-certificates jq build-base bash
     ;;
   pacman)
     if command -v sudo >/dev/null 2>&1; then SUDO=sudo; else SUDO=""; fi
@@ -184,89 +115,139 @@ case "$PKG_MGR" in
     brew update || true
     brew install git curl jq
     ;;
-  pkg)
-    # Host userland when on Android; the heavy install is being routed
-    # to proot-distro Debian by the auto-routing block above. Only need
-    # the basic CLI helpers here.
-    pkg update -y
-    pkg install -y git curl jq
+  "")
+    # On Termux the host pkg manager is `pkg`. We'll handle the OS deps
+    # (git, curl, jq) on the Termux side as part of Foundry install below.
+    if [[ $TERMUX -eq 1 ]]; then
+      log "  (Termux: installing git, curl, jq via pkg)"
+      pkg update -y
+      pkg install -y git curl jq
+    else
+      warn "Unknown Linux distribution ($DISTRO). Assuming git, curl, jq are present."
+    fi
     ;;
   *)
-    warn "Unknown platform (OS=$OS, DISTRO=$DISTRO)."
-    warn "Install manually: git, curl, jq, build-essential (or equivalent), then re-run."
+    warn "Unknown package manager: $PKG_MGR (skipping system deps)"
     ;;
 esac
 ok "system dependencies present"
 
 # --- Step 2: Foundry ---------------------------------------------------------
+# Strategy:
+#   - Termux: download the STATIC alpine/arm64 Foundry binary directly
+#     from Foundry's GitHub release. It's a pure musl static build that
+#     runs natively on Bionic — no proot, no glibc, no TLS issues.
+#   - Linux/macOS: use the official foundryup installer.
+#   - In both cases, install to $HOME/.foundry/bin and add to PATH.
 if [[ $SKIP_FORGE -eq 0 ]]; then
   log "Step 2/6: Foundry (cast / forge / anvil)"
+  if [[ $FORCE -eq 1 && -d "$HOME/.foundry" ]]; then
+    log "  removing $HOME/.foundry (force mode)"
+    rm -rf "$HOME/.foundry"
+  fi
+
   if command -v cast >/dev/null 2>&1 && command -v forge >/dev/null 2>&1 \
-     && cast --version >/dev/null 2>&1; then
-    ok "Foundry already on PATH and working (cast=$(command -v cast), forge=$(command -v forge))"
+     && cast --version >/dev/null 2>&1 && forge --version >/dev/null 2>&1; then
+    ok "Foundry already installed and working (cast=$(command -v cast), forge=$(command -v forge))"
   else
-    # Install Foundry to /usr/local/bin (or, on the Termux proot,
-    # /usr/local/bin on the proot's own rootfs). This avoids the
-    # bind-mounted /root path that triggers Termux's loader to try
-    # to interpret the glibc binary and fail with 'TLS segment
-    # underaligned'. The foundryup installer honours FOUNDRY_DIR.
-    FOUNDRY_DIR="/usr/local"
-    export FOUNDRY_DIR
-    if [[ -d "$HOME/.foundry" ]]; then
-      log "  removing pre-existing (possibly broken) foundry at $HOME/.foundry"
-      rm -rf "$HOME/.foundry" 2>/dev/null || true
-    fi
-    log "  downloading foundryup"
-    curl -L https://foundry.paradigm.xyz | bash
-    log "  running foundryup (installs to $FOUNDRY_DIR/bin)"
-    "$HOME/.foundry/bin/foundryup"
-    # foundryup installs to $FOUNDRY_DIR/bin; ensure it's on PATH.
-    if [[ -x "$FOUNDRY_DIR/bin/forge" ]]; then
-      # Copy (not symlink) into /usr/local/bin. Symlinks can confuse
-      # glibc 2.34+'s __libc_init when it reads /proc/self/exe, which
-      # is a known issue under proot-distro. A real file at the path
-      # works cleanly.
-      cp -f "$FOUNDRY_DIR/bin/cast"  /usr/local/bin/cast  2>/dev/null || true
-      cp -f "$FOUNDRY_DIR/bin/forge" /usr/local/bin/forge 2>/dev/null || true
-      cp -f "$FOUNDRY_DIR/bin/anvil" /usr/local/bin/anvil 2>/dev/null || true
-      chmod +x /usr/local/bin/cast /usr/local/bin/forge /usr/local/bin/anvil 2>/dev/null || true
-      export PATH="/usr/local/bin:$PATH"
+    if [[ $TERMUX -eq 1 ]]; then
+      # --- Termux: download the static musl/alpine arm64 build -------
+      # The "alpine" build is statically linked against musl, so it
+      # doesn't depend on Termux's Bionic libc. This is the only
+      # Foundry release asset that runs natively on Termux.
+      mkdir -p "$HOME/.foundry/bin"
+      VERSION="v1.7.1"
+      ARCH="arm64"
+      TARBALL="foundry_${VERSION}_alpine_${ARCH}.tar.gz"
+      URL="https://github.com/foundry-rs/foundry/releases/download/${VERSION}/${TARBALL}"
+      log "  downloading Foundry ${VERSION} (alpine/${ARCH}, static, ~80 MB)"
+      if ! curl -fsSL "$URL" -o "/tmp/${TARBALL}"; then
+        fail "could not download ${URL}" 1
+      fi
+      tar -xzf "/tmp/${TARBALL}" -C "$HOME/.foundry/bin"
+      rm -f "/tmp/${TARBALL}"
+      chmod +x "$HOME/.foundry/bin/"*
+      ok "  installed to $HOME/.foundry/bin/"
     else
-      # Fallback: foundryup may have used a different layout.
+      # --- Linux / macOS: standard foundryup -------------------------
+      log "  downloading foundryup"
+      curl -L https://foundry.paradigm.xyz | bash
+      log "  running foundryup (downloads cast / forge / anvil)"
+      # shellcheck disable=SC1091
+      [[ -f "$HOME/.bashrc" ]] && source "$HOME/.bashrc" 2>/dev/null || true
+      "$HOME/.foundry/bin/foundryup"
+    fi
+
+    # Verify.
+    if ! command -v cast >/dev/null 2>&1 || ! cast --version >/dev/null 2>&1; then
       export PATH="$HOME/.foundry/bin:$PATH"
     fi
-    # Persist for future shells.
-    if [[ -f "$HOME/.bashrc" ]] && ! grep -q '/usr/local/bin' "$HOME/.bashrc"; then
-      printf '\n# Foundry (added by LCP install.sh)\nexport PATH="/usr/local/bin:$PATH"\n' >> "$HOME/.bashrc"
+    if ! command -v cast >/dev/null 2>&1 || ! cast --version >/dev/null 2>&1; then
+      fail "Foundry install failed: 'cast' is not on PATH or does not work" 2
+    fi
+
+    # Persist PATH for future shells.
+    if [[ -f "$HOME/.bashrc" ]] && ! grep -q '\.foundry/bin' "$HOME/.bashrc"; then
+      printf '\n# Foundry (added by LCP install.sh)\nexport PATH="$HOME/.foundry/bin:$PATH"\n' \
+        >> "$HOME/.bashrc"
+    fi
+    if [[ -f "$HOME/.profile" ]] && ! grep -q '\.foundry/bin' "$HOME/.profile"; then
+      printf '\n# Foundry (added by LCP install.sh)\nexport PATH="$HOME/.foundry/bin:$PATH"\n' \
+        >> "$HOME/.profile"
     fi
   fi
 else
   log "Step 2/6: Foundry (skipped via --skip-forge)"
 fi
 
-# --- Step 3: Verify binaries -------------------------------------------------
-log "Step 3/6: verifying required binaries"
-for bin in cast forge jq; do
-  if ! command -v "$bin" >/dev/null 2>&1; then
-    fail "required binary missing: $bin (try running without --skip-forge)" 2
+# --- Step 3: solc (Solidity compiler) ---------------------------------------
+# forge shells out to 'solc'. On Linux x86_64 the bundled solc-bin
+# works; on Linux arm64 and Termux we need a static solc.
+log "Step 3/6: Solidity compiler (solc)"
+if command -v solc >/dev/null 2>&1 && solc --version >/dev/null 2>&1; then
+  ok "solc already installed: $(solc --version 2>&1 | head -1)"
+else
+  # Download the official static solc directly from the Solidity
+  # binaries mirror. Both linux-amd64 and linux-arm64 are available.
+  case "$(uname -m)" in
+    x86_64|amd64)   SOLC_ARCH="linux-amd64" ;;
+    aarch64|arm64)  SOLC_ARCH="linux-arm64" ;;
+    *)              SOLC_ARCH="" ;;
+  esac
+  if [[ -n "$SOLC_ARCH" ]]; then
+    log "  downloading solc 0.8.31 ($SOLC_ARCH static binary)"
+    SOLC_URL="https://binaries.soliditylang.org/${SOLC_ARCH}/solc-${SOLC_ARCH}-v0.8.31+commit.fd3a2265"
+    if curl -fsSL "$SOLC_URL" -o /tmp/solc-static; then
+      if [[ $TERMUX -eq 1 ]]; then
+        # Termux is read-only-friendly: install to $PREFIX/bin.
+        cp -f /tmp/solc-static "$PREFIX/bin/solc"
+        chmod +x "$PREFIX/bin/solc"
+        ok "  solc installed at $PREFIX/bin/solc"
+      else
+        install -m 0755 /tmp/solc-static /usr/local/bin/solc
+        ok "  solc installed at /usr/local/bin/solc"
+      fi
+      rm -f /tmp/solc-static
+    else
+      fail "failed to download solc from $SOLC_URL" 1
+    fi
+  else
+    warn "no static solc available for $(uname -m); forge may use its bundled solc-bin"
   fi
-done
-CAST_VER="$(cast --version 2>/dev/null | head -1 || echo unknown)"
-FORGE_VER="$(forge --version 2>/dev/null | head -1 || echo unknown)"
-ok "cast : $CAST_VER"
-ok "forge: $FORGE_VER"
+fi
 
-# --- Step 4: forge-std dependency --------------------------------------------
-log "Step 4/6: forge-std dependency + repo freshness check"
+# --- Step 4: LCP repo + forge-std --------------------------------------------
+log "Step 4/6: LCP repo + forge-std"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# If the script is being run from a directory that isn't a git repo,
-# fall back to a known good location. This protects against the user
-# running the script from an empty/aborted clone target.
+# If the script is in a directory that's not a git repo (e.g. user
+# just downloaded install.sh alone), clone the repo to $HOME/LCP and
+# continue from there. This makes the install robust to a partial
+# or aborted clone.
 if [[ ! -d "$SCRIPT_DIR/.git" ]]; then
   TARGET="$HOME/LCP"
   if [[ -d "$TARGET/.git" ]]; then
-    log "  $SCRIPT_DIR is not a git repo; switching to existing $TARGET"
+    log "  $SCRIPT_DIR is not a git repo; using existing $TARGET"
     SCRIPT_DIR="$TARGET"
     cd "$SCRIPT_DIR"
   else
@@ -280,15 +261,15 @@ else
   git pull --ff-only || true
 fi
 
-mkdir -p "$SCRIPT_DIR/lib"
 if [[ ! -d "$SCRIPT_DIR/lib/forge-std" ]]; then
+  log "  cloning forge-std into lib/"
   git clone --depth 1 https://github.com/foundry-rs/forge-std.git "$SCRIPT_DIR/lib/forge-std"
 else
-  log "  forge-std already present in lib/ (skipping clone)"
+  log "  forge-std already present in lib/"
 fi
-ok "lib/forge-std ready"
+ok "LCP repo + forge-std ready at $SCRIPT_DIR"
 
-# --- Step 5: Make the CLI executable -----------------------------------------
+# --- Step 5: Make the CLI executable ----------------------------------------
 log "Step 5/6: marking CLI as executable"
 chmod +x "$SCRIPT_DIR/examples/score.sh" "$SCRIPT_DIR/test/test_score.sh"
 ok "examples/score.sh and test/test_score.sh are +x"
@@ -319,16 +300,15 @@ cat <<'DONE'
 
   LCP install: complete.
 
-  Quick commands (re-enter the proot every time you want to use the skill):
-    proot-distro login debian
-    export PATH="/usr/local/bin:\$PATH"
+  Quick commands (from this directory, in any new shell):
+    export PATH="$HOME/.foundry/bin:$PATH"
     cd ~/LCP
     forge test -vvv                                  # Foundry test suite (7 passing)
     bash test/test_score.sh                          # shell smoke test (4 passing, 1 skipped)
     ./examples/score.sh native:PROS mainnet          # one-shot CLI run
 
   Optional — exercise the live ERC-20 path (requires anvil):
-    anvil --port 8545 &                              # in another proot shell
+    anvil --port 8545 &                              # in another shell
     LCP_LIVE_TEST=1 LCP_RPC_URL=http://127.0.0.1:8545 bash test/test_score.sh
                                                       # 11 passing; 0 failed
 
