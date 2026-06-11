@@ -150,9 +150,17 @@ ok "system dependencies present"
 # --- Step 2: Foundry ---------------------------------------------------------
 if [[ $SKIP_FORGE -eq 0 ]]; then
   log "Step 2/6: Foundry (cast / forge / anvil)"
-  if command -v cast >/dev/null 2>&1 && command -v forge >/dev/null 2>&1; then
-    ok "Foundry already on PATH (cast=$(command -v cast), forge=$(command -v forge))"
+  if command -v cast >/dev/null 2>&1 && command -v forge >/dev/null 2>&1 \
+     && cast --version >/dev/null 2>&1; then
+    ok "Foundry already on PATH and working (cast=$(command -v cast), forge=$(command -v forge))"
   else
+    # If a previous install left a half-working foundry (e.g. Termux
+    # manual install with a broken chisel), wipe it so foundryup can
+    # start clean.
+    if [[ -d "$HOME/.foundry/bin" ]]; then
+      log "  removing pre-existing (possibly broken) foundry at $HOME/.foundry/bin"
+      rm -rf "$HOME/.foundry" 2>/dev/null || true
+    fi
     log "  downloading foundryup"
     curl -L https://foundry.paradigm.xyz | bash
     log "  running foundryup (downloads cast / forge / anvil)"
@@ -186,6 +194,27 @@ ok "forge: $FORGE_VER"
 # --- Step 4: forge-std dependency --------------------------------------------
 log "Step 4/6: forge-std test dependency"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# If the script is being run from a directory that isn't a git repo
+# (e.g. the user's earlier `git clone` aborted and left an empty LCP/
+# folder), fetch the repo so we have something to work with. This makes
+# the install flow robust against a partial clone.
+if [[ ! -d "$SCRIPT_DIR/.git" ]]; then
+  if [[ -d "$SCRIPT_DIR" ]] && [[ -n "$(ls -A "$SCRIPT_DIR" 2>/dev/null)" ]]; then
+    warn "$SCRIPT_DIR is not empty and is not a git repo."
+    warn "If your earlier 'git clone' failed, run:"
+    warn "    rm -rf \"$SCRIPT_DIR\""
+    warn "    git clone https://github.com/networkbike/LCP.git"
+    warn "    cd LCP && ./install.sh"
+    fail "aborting to avoid overwriting your files" 5
+  else
+    log "  $SCRIPT_DIR is empty; cloning LCP into it"
+    cd "$(dirname "$SCRIPT_DIR")"
+    git clone --depth 1 https://github.com/networkbike/LCP.git "$(basename "$SCRIPT_DIR")"
+    cd "$SCRIPT_DIR"
+  fi
+fi
+
 mkdir -p "$SCRIPT_DIR/lib"
 if [[ ! -d "$SCRIPT_DIR/lib/forge-std" ]]; then
   git clone --depth 1 https://github.com/foundry-rs/forge-std.git "$SCRIPT_DIR/lib/forge-std"
