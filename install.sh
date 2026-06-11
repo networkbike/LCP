@@ -116,6 +116,25 @@ case "$PKG_MGR" in
     if command -v sudo >/dev/null 2>&1; then SUDO=sudo; else SUDO=""; fi
     $SUDO apt-get update
     $SUDO apt-get install -y git curl ca-certificates jq build-essential
+    # `forge` shells out to the `solc` binary by default. Foundry's
+    # bundled solc-bin works on Linux x86_64, but on ARM64 hosts (e.g.
+    # the Termux proot environment, Raspberry Pi, AWS Graviton) we need
+    # a system `solc` because the bundled one is x86_64 only. If `solc`
+    # isn't already on PATH, install it via pip + solc-select, which
+    # downloads the official static solc release tarball. Falls back
+    # gracefully if pip or network is unavailable.
+    if ! command -v solc >/dev/null 2>&1; then
+      log "  installing solc 0.8.20 (Solidity compiler)"
+      $SUDO apt-get install -y python3-pip 2>/dev/null || true
+      $SUDO pip3 install --break-system-packages solc-select 2>/dev/null \
+        || $SUDO pip3 install solc-select 2>/dev/null || true
+      $SUDO solc-select install 0.8.20 2>/dev/null || true
+      $SUDO solc-select use 0.8.20 2>/dev/null || true
+      if ! command -v solc >/dev/null 2>&1; then
+        warn "  solc install via solc-select failed; forge test may still fail on ARM64."
+        warn "  Try: pip3 install --user solc-select && ~/.local/bin/solc-select install 0.8.20"
+      fi
+    fi
     ;;
   apk)
     if command -v sudo >/dev/null 2>&1; then SUDO=sudo; else SUDO=""; fi
@@ -192,27 +211,27 @@ ok "cast : $CAST_VER"
 ok "forge: $FORGE_VER"
 
 # --- Step 4: forge-std dependency --------------------------------------------
-log "Step 4/6: forge-std test dependency"
+log "Step 4/6: forge-std dependency + repo freshness check"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# If the script is being run from a directory that isn't a git repo
-# (e.g. the user's earlier `git clone` aborted and left an empty LCP/
-# folder), fetch the repo so we have something to work with. This makes
-# the install flow robust against a partial clone.
+# If the script is being run from a directory that isn't a git repo,
+# fall back to a known good location. This protects against the user
+# running the script from an empty/aborted clone target.
 if [[ ! -d "$SCRIPT_DIR/.git" ]]; then
-  if [[ -d "$SCRIPT_DIR" ]] && [[ -n "$(ls -A "$SCRIPT_DIR" 2>/dev/null)" ]]; then
-    warn "$SCRIPT_DIR is not empty and is not a git repo."
-    warn "If your earlier 'git clone' failed, run:"
-    warn "    rm -rf \"$SCRIPT_DIR\""
-    warn "    git clone https://github.com/networkbike/LCP.git"
-    warn "    cd LCP && ./install.sh"
-    fail "aborting to avoid overwriting your files" 5
+  TARGET="$HOME/LCP"
+  if [[ -d "$TARGET/.git" ]]; then
+    log "  $SCRIPT_DIR is not a git repo; switching to existing $TARGET"
+    SCRIPT_DIR="$TARGET"
+    cd "$SCRIPT_DIR"
   else
-    log "  $SCRIPT_DIR is empty; cloning LCP into it"
-    cd "$(dirname "$SCRIPT_DIR")"
-    git clone --depth 1 https://github.com/networkbike/LCP.git "$(basename "$SCRIPT_DIR")"
+    log "  cloning LCP into $TARGET"
+    git clone --depth 1 https://github.com/networkbike/LCP.git "$TARGET"
+    SCRIPT_DIR="$TARGET"
     cd "$SCRIPT_DIR"
   fi
+else
+  log "  refreshing $SCRIPT_DIR from origin"
+  git pull --ff-only || true
 fi
 
 mkdir -p "$SCRIPT_DIR/lib"
