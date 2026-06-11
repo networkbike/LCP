@@ -94,7 +94,11 @@ if [[ $TERMUX -eq 1 && -z "${LCP_INSIDE_PROOT:-}" ]]; then
     log "  installing proot-distro"
     pkg install -y proot-distro
   }
-  if ! proot-distro list 2>/dev/null | grep -q debian; then
+  # Ensure a Debian rootfs exists. 'proot-distro list' output format
+  # varies; rather than parse it, just try to login first, and only
+  # install if that fails. This handles "debian already exists" cleanly
+  # without parsing fragile output.
+  if ! proot-distro login debian -- /bin/true 2>/dev/null; then
     log "  installing Debian rootfs (one-time, ~150 MB)"
     proot-distro install debian
   fi
