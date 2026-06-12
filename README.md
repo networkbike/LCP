@@ -1,7 +1,5 @@
 # LCP — Liquidity Crisis Predictor
 
-![LCP logo — wave breaking into a downward chart](assets/lcp-logo.png)
-
 A deterministic, read-only on-chain analytics skill that produces a
 **0–100 liquidity-stress score**, a **HEALTHY / WATCH / CRITICAL** band, a
 **crisis probability**, and the **top contributing signals** for any ERC-20
