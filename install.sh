@@ -155,19 +155,34 @@ if [[ $SKIP_FORGE -eq 0 ]]; then
       # The "alpine" build is statically linked against musl, so it
       # doesn't depend on Termux's Bionic libc. This is the only
       # Foundry release asset that runs natively on Termux.
+      #
+      # IMPORTANT: install to $HOME/.foundry/bin (NOT $PREFIX/bin)
+      # so the Foundry binaries are co-located with where the
+      # standard foundryup installer would put them. We also make
+      # them visible to the Termux shell by symlinking into
+      # $PREFIX/bin for convenience.
       mkdir -p "$HOME/.foundry/bin"
       VERSION="v1.7.1"
       ARCH="arm64"
       TARBALL="foundry_${VERSION}_alpine_${ARCH}.tar.gz"
       URL="https://github.com/foundry-rs/foundry/releases/download/${VERSION}/${TARBALL}"
       log "  downloading Foundry ${VERSION} (alpine/${ARCH}, static, ~80 MB)"
-      if ! curl -fsSL "$URL" -o "/tmp/${TARBALL}"; then
+      TMP_TGZ="/tmp/${TARBALL}.$$"
+      if ! curl -fsSL "$URL" 2>/dev/null > "$TMP_TGZ"; then
+        rm -f "$TMP_TGZ"
         fail "could not download ${URL}" 1
       fi
-      tar -xzf "/tmp/${TARBALL}" -C "$HOME/.foundry/bin"
-      rm -f "/tmp/${TARBALL}"
+      tar -xzf "$TMP_TGZ" -C "$HOME/.foundry/bin"
+      rm -f "$TMP_TGZ"
       chmod +x "$HOME/.foundry/bin/"*
-      ok "  installed to $HOME/.foundry/bin/"
+      # Also expose cast/forge/anvil at $PREFIX/bin so the user
+      # doesn't need to export PATH manually every session.
+      for b in cast forge anvil chisel; do
+        if [[ -x "$HOME/.foundry/bin/$b" ]]; then
+          cp -f "$HOME/.foundry/bin/$b" "$PREFIX/bin/$b" 2>/dev/null || true
+        fi
+      done
+      ok "  installed to $HOME/.foundry/bin/ and \$PREFIX/bin/"
     else
       # --- Linux / macOS: standard foundryup -------------------------
       log "  downloading foundryup"
@@ -179,9 +194,11 @@ if [[ $SKIP_FORGE -eq 0 ]]; then
     fi
 
     # Verify.
-    if ! command -v cast >/dev/null 2>&1 || ! cast --version >/dev/null 2>&1; then
-      export PATH="$HOME/.foundry/bin:$PATH"
-    fi
+    # Always put $HOME/.foundry/bin on PATH for the rest of this
+    # install, regardless of whether the install also created
+    # $PREFIX/bin symlinks. This is the canonical Foundry install
+    # location and what 'forge test' will look for in the next step.
+    export PATH="$HOME/.foundry/bin:$PATH"
     if ! command -v cast >/dev/null 2>&1 || ! cast --version >/dev/null 2>&1; then
       fail "Foundry install failed: 'cast' is not on PATH or does not work" 2
     fi
@@ -217,19 +234,29 @@ else
   if [[ -n "$SOLC_ARCH" ]]; then
     log "  downloading solc 0.8.31 ($SOLC_ARCH static binary)"
     SOLC_URL="https://binaries.soliditylang.org/${SOLC_ARCH}/solc-${SOLC_ARCH}-v0.8.31+commit.fd3a2265"
-    if curl -fsSL "$SOLC_URL" -o /tmp/solc-static; then
+    # Stream to stdout, redirect to file. Some Termux builds hit a
+    # 'curl: (23) client returned ERROR on write' bug with -o.
+    SOLC_TMP="/tmp/solc-static.$$"
+    if curl -fsSL "$SOLC_URL" 2>/dev/null > "$SOLC_TMP"; then
       if [[ $TERMUX -eq 1 ]]; then
-        # Termux is read-only-friendly: install to $PREFIX/bin.
-        cp -f /tmp/solc-static "$PREFIX/bin/solc"
+        cp -f "$SOLC_TMP" "$PREFIX/bin/solc"
         chmod +x "$PREFIX/bin/solc"
         ok "  solc installed at $PREFIX/bin/solc"
+        # $PREFIX/bin is on PATH in Termux, but be defensive.
+        export PATH="$PREFIX/bin:$PATH"
       else
-        install -m 0755 /tmp/solc-static /usr/local/bin/solc
+        install -m 0755 "$SOLC_TMP" /usr/local/bin/solc
         ok "  solc installed at /usr/local/bin/solc"
+        export PATH="/usr/local/bin:$PATH"
       fi
-      rm -f /tmp/solc-static
+      rm -f "$SOLC_TMP"
     else
-      fail "failed to download solc from $SOLC_URL" 1
+      rm -f "$SOLC_TMP"
+      warn "  failed to download solc from $SOLC_URL"
+      warn "  continuing without solc. forge test will try to download it itself."
+      warn "  If 'forge test' later complains about solc, re-run the install"
+      warn "  or download manually:"
+      warn "    curl -fsSL '$SOLC_URL' -o /usr/local/bin/solc && chmod +x /usr/local/bin/solc"
     fi
   else
     warn "no static solc available for $(uname -m); forge may use its bundled solc-bin"
