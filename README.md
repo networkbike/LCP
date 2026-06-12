@@ -159,7 +159,7 @@ you want to know what to check — the runtime is just Foundry + jq:
 | Binary | Required? | Install |
 |--------|-----------|---------|
 | `cast`, `forge`, `anvil` | **Yes** — mandatory | `curl -L https://foundry.paradigm.xyz \| bash && foundryup` |
-| `solc`    | **Yes** — `forge test` needs it. The `install.sh` handles this automatically. | On Linux/macOS: `curl -fsSL "https://binaries.soliditylang.org/linux-amd64/solc-linux-amd64-v0.8.31+commit.fd3a2265" -o /usr/local/bin/solc && chmod +x /usr/local/bin/solc`. On Bionic Termux the static linux-arm64 build is e_type=2 (rejected by Bionic); the install.sh fetches the Termux-packaged PIE 0.8.35 .deb from `packages.termux.dev` and patches `foundry.toml` to use it. |
+| `solc`    | **Yes** — `forge test` needs it. The `install.sh` handles this automatically. | On Linux/macOS: `curl -fsSL "https://binaries.soliditylang.org/linux-amd64/solc-linux-amd64-v0.8.31+commit.fd3a2265" -o /usr/local/bin/solc && chmod +x /usr/local/bin/solc`. On Bionic Termux the static linux-arm64 build is e_type=2 (rejected by Bionic); the install.sh fetches the Termux-packaged PIE 0.8.35 .deb from `packages.termux.dev` and patches `foundry.toml` to use it. The Termux solc is dynamically linked and needs `boost` and `libc++` from Termux's `pkg` repo. |
 | `git`     | Yes | usually preinstalled; `apt install git` / `brew install git` |
 | `jq`      | Yes (for JSON output) | `apt install jq` / `brew install jq` |
 | `bash` ≥ 4 | Yes (for the CLI) | preinstalled on macOS / most Linux |
@@ -224,7 +224,7 @@ fetching the Termux-packaged PIE foundry and solc .debs from
 `packages.termux.dev`. Manual fallback:
 
 ```bash
-pkg update && pkg install -y jq git curl xz-utils  # xz-utils gives xzcat as a fallback
+pkg update && pkg install -y jq git curl xz-utils boost libc++  # boost/libc++ needed by Termux solc
 
 # 1. Foundry — use the Termux-packaged .deb, NOT foundryup.
 #    foundryup installs the alpine/arm64 static build which has a
@@ -362,6 +362,7 @@ There are no migrations between LCP versions yet; the output schema
 | `Missing required binary: cast` | Foundry not on `PATH` | `source ~/.bashrc` or `export PATH="/usr/local/bin:$PATH"` |
 | `forge test` fails | Foundry version mismatch or `lib/forge-std` missing | `foundryup` to update; `./install.sh` re-clones `forge-std` |
 | `solc has unexpected e_type: 2` | You're on Bionic Termux. The static linux-arm64 solc from `binaries.soliditylang.org` is e_type=2 (non-PIE), which Bionic's `execve` refuses. The `install.sh` auto-fixes this by fetching the Termux-packaged PIE 0.8.35 .deb from `packages.termux.dev`. Re-run `cd ~/LCP && ./install.sh` to apply the patch. |
+| `library "libboost_filesystem.so" not found` | The Termux-packaged solc is dynamically linked and needs `boost` and `libc++` from Termux's `pkg` repo. The install.sh installs them automatically, but if you're on a manual install: `pkg install -y boost libc++`. |
 | `jq: command not found` | `jq` not installed | `apt install jq` / `brew install jq` |
 | `RPC unreachable: https://rpc.pharos.xyz` | No outbound HTTPS, or the RPC is down | Test with `curl -I https://rpc.pharos.xyz`; switch to `atlantic-testnet` for development, or set `LCP_RPC_URL` to a local `anvil` instance |
 | `Refusing to run: $PRIVATE_KEY is set` | You have a wallet env var set | `unset PRIVATE_KEY` for the LCP session. LCP is read-only and must not see keys. |

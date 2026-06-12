@@ -117,11 +117,12 @@ case "$PKG_MGR" in
     ;;
   "")
     # On Termux the host pkg manager is `pkg`. We'll handle the OS deps
-    # (git, curl, jq) on the Termux side as part of Foundry install below.
+    # (git, curl, jq, and the solc runtime libraries) on the Termux
+    # side as part of Foundry install below.
     if [[ $TERMUX -eq 1 ]]; then
-      log "  (Termux: installing git, curl, jq via pkg)"
+      log "  (Termux: installing git, curl, jq, boost, libc++ via pkg)"
       pkg update -y
-      pkg install -y git curl jq
+      pkg install -y git curl jq boost libc++
     else
       warn "Unknown Linux distribution ($DISTRO). Assuming git, curl, jq are present."
     fi
@@ -379,8 +380,20 @@ else
           ok "  solc is working: $(solc --version 2>&1 | head -1)"
           export PATH="$PREFIX/bin:$PATH"
         else
-          warn "  solc installed but 'solc --version' failed."
-          warn "  Will rely on forge to find it via PATH."
+          # The binary is in place but cannot exec — likely missing
+          # shared libraries (boost, libc++). Print the actual
+          # error so the user can see what's missing.
+          SOLC_ERR="$(solc --version 2>&1 | head -3)"
+          warn "  solc installed at $PREFIX/bin/solc but 'solc --version' failed:"
+          warn "    $SOLC_ERR"
+          warn "  This usually means the runtime libraries (boost, libc++) are"
+          warn "  not installed. Run: pkg install -y boost libc++"
+          warn "  Then re-run: cd ~/LCP && ./install.sh"
+          # Don't proceed; forge will fail too. We can't reasonably
+          # retry the pkg install from inside install.sh (it needs
+          # interactive confirmation in some Termux builds), so
+          # bail with a clear actionable error.
+          fail "solc binary present but unexecutable (missing shared libs)" 2
         fi
         # NOTE: we don't patch foundry.toml here. SCRIPT_DIR
         # isn't set yet (this is Step 3; the LCP repo is
