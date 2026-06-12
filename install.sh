@@ -296,13 +296,16 @@ fi
 log "Step 4/6: LCP repo + forge-std"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Resolve the actual LCP repo directory. Three cases:
+# Resolve the actual LCP repo directory. Cases:
 #  1. SCRIPT_DIR is a git repo (the user ran from a real clone).
 #  2. SCRIPT_DIR is empty/non-existent and $HOME/LCP is a real clone.
 #     (user ran install.sh from an empty target, auto-recovery).
-#  3. $HOME/LCP exists but isn't a git repo and isn't empty.
-#     This is a partially-failed previous install. We refuse to
-#     clobber; we tell the user to clean up and re-run.
+#  3. $HOME/LCP exists but isn't a git repo (e.g. partial clone
+#     from a prior failed install, or a junk folder). In this case
+#     we proactively remove $HOME/LCP and re-clone. The user is
+#     explicitly asking to install LCP, so a partial prior clone
+#     is treated as junk to be replaced.
+#  4. SCRIPT_DIR itself is empty and $HOME/LCP doesn't exist: clone.
 if [[ -d "$SCRIPT_DIR/.git" ]]; then
   log "  using $SCRIPT_DIR (git repo)"
   cd "$SCRIPT_DIR"
@@ -310,12 +313,15 @@ elif [[ -d "$HOME/LCP/.git" ]]; then
   log "  $SCRIPT_DIR is not a git repo; using existing $HOME/LCP"
   SCRIPT_DIR="$HOME/LCP"
   cd "$SCRIPT_DIR"
-elif [[ -d "$HOME/LCP" ]] && [[ -n "$(ls -A "$HOME/LCP" 2>/dev/null)" ]]; then
-  warn "  $HOME/LCP exists and is non-empty but is not a git repo."
-  warn "  This usually means a previous 'git clone' failed mid-way."
-  warn "  Run:    rm -rf \$HOME/LCP"
-  warn "  Then re-run: ./install.sh"
-  fail "aborting to avoid clobbering existing files" 5
+elif [[ -d "$HOME/LCP" ]]; then
+  # Partial clone or junk from a prior run. Wipe and re-clone.
+  warn "  $HOME/LCP exists but is not a git repo (partial prior install?)"
+  warn "  removing and re-cloning"
+  rm -rf "$HOME/LCP" 2>/dev/null || true
+  log "  cloning LCP into $HOME/LCP"
+  git clone --depth 1 https://github.com/networkbike/LCP.git "$HOME/LCP"
+  SCRIPT_DIR="$HOME/LCP"
+  cd "$SCRIPT_DIR"
 else
   log "  cloning LCP into $HOME/LCP"
   git clone --depth 1 https://github.com/networkbike/LCP.git "$HOME/LCP"
