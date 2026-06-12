@@ -21,8 +21,14 @@ runtime:
     mandatory: true
     version: ">=1.0.0"
     rationale: "The Pharos Skill Agent runs `forge test -vvv` against this skill. Foundry is the only required runtime."
+    install_linux_macos: "curl -L https://foundry.paradigm.xyz | bash && source ~/.bashrc && foundryup"
+    install_termux: "curl -L https://foundry.paradigm.xyz | bash && source ~/.bashrc && foundryup  # forge itself works on Termux. solc on Termux is auto-installed by install.sh — see below."
     install: "curl -L https://foundry.paradigm.xyz | bash && foundryup"
     solc: "0.8.31 (foundry.toml pins this; the bundled LCP install.sh downloads it from binaries.soliditylang.org on Linux/macOS. On Bionic Termux the install.sh fetches the Termux-packaged PIE 0.8.35 .deb from packages.termux.dev, extracts it, and patches foundry.toml to use the system solc on PATH. The Pharos grader runs on a Linux server, so the foundry.toml pin is honored there.)"
+    solc_install_linux_amd64: "curl -fsSL 'https://binaries.soliditylang.org/linux-amd64/solc-linux-amd64-v0.8.31+commit.fd3a2265' -o /usr/local/bin/solc && chmod +x /usr/local/bin/solc"
+    solc_install_linux_arm64: "curl -fsSL 'https://binaries.soliditylang.org/linux-arm64/solc-linux-arm64-v0.8.31+commit.fd3a2265' -o /usr/local/bin/solc && chmod +x /usr/local/bin/solc"
+    solc_install_macos_amd64: "curl -fsSL 'https://binaries.soliditylang.org/macosx-amd64/solc-macosx-amd64-v0.8.31+commit.fd3a2265' -o /usr/local/bin/solc && chmod +x /usr/local/bin/solc"
+    solc_install_termux: "Run ./install.sh. Manual fallback: download solidity_0.8.35_aarch64.deb from packages.termux.dev, extract data.tar.xz with ar+tar, copy data/data/com.termux/files/usr/bin/solc to $PREFIX/bin/solc. Bionic rejects the e_type=2 static linux-arm64 build, so this path is mandatory on Termux."
 test:
   command: "forge test -vvv"
   expected: "7 passing"
@@ -134,16 +140,35 @@ Solidity and validates every anchor point in
 # and runs the shell smoke test (must show 4 passed, 1 skipped).
 
 # Or, manually:
-curl -L https://foundry.paradigm.xyz | bash && foundryup
+# 1. Foundry (forge, cast, anvil)
+curl -L https://foundry.paradigm.xyz | bash && source ~/.bashrc && foundryup
 
-# Install solc. On Linux/macOS the static binary from
-# binaries.soliditylang.org works out of the box. On Bionic Termux
-# the static linux-arm64 build is e_type=2 (non-PIE) and Bionic's
-# execve refuses it; the install.sh handles this automatically, so
-# the simplest path is just to run ./install.sh. Manual fallback
-# for Termux: download the Termux-packaged solc .deb and extract it
-# to $PREFIX/bin/solc — see install.sh for the exact recipe.
-curl -fsSL "https://binaries.soliditylang.org/linux-amd64/solc-linux-amd64-v0.8.31+commit.fd3a2265" -o /usr/local/bin/solc && chmod +x /usr/local/bin/solc
+# 2. solc 0.8.31 (Linux x86_64)
+curl -fsSL "https://binaries.soliditylang.org/linux-amd64/solc-linux-amd64-v0.8.31+commit.fd3a2265" \
+  -o /usr/local/bin/solc && chmod +x /usr/local/bin/solc
+
+# 2b. solc 0.8.31 (Linux arm64)
+# curl -fsSL "https://binaries.soliditylang.org/linux-arm64/solc-linux-arm64-v0.8.31+commit.fd3a2265" \
+#   -o /usr/local/bin/solc && chmod +x /usr/local/bin/solc
+
+# 2c. solc 0.8.31 (macOS amd64)
+# curl -fsSL "https://binaries.soliditylang.org/macosx-amd64/solc-macosx-amd64-v0.8.31+commit.fd3a2265" \
+#   -o /usr/local/bin/solc && chmod +x /usr/local/bin/solc
+
+# 2d. solc on Bionic Termux (Android): use ./install.sh instead.
+# The static linux-arm64 build from binaries.soliditylang.org is
+# e_type=2 (non-PIE) and Bionic's execve refuses it. The install.sh
+# fetches the Termux-packaged PIE 0.8.35 .deb from packages.termux.dev
+# and patches foundry.toml to use the system solc. Use ./install.sh.
+
+# 3. jq + git (use your platform's package manager)
+apt install -y jq git         # Debian/Ubuntu
+# apk add jq git               # Alpine
+# brew install jq git          # macOS
+# pkg install jq git           # Termux
+
+# 4. Verify
+forge --version && solc --version && jq --version
 
 # Run the Foundry test suite
 forge test -vvv

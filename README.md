@@ -173,6 +173,82 @@ You do **not** need a wallet, a private key, a seed phrase, or any API
 token. LCP is read-only and will refuse to run if `$PRIVATE_KEY` is set in
 the environment (exit code 77).
 
+### Foundry install commands (by platform)
+
+The runtime is Foundry. Copy-paste the block for your platform.
+
+**Linux x86_64 / arm64 (Ubuntu, Debian, Alpine, Arch, RHEL, WSL, Docker):**
+
+```bash
+# 1. Foundry (forge, cast, anvil)
+curl -L https://foundry.paradigm.xyz | bash
+source ~/.bashrc
+foundryup
+
+# 2. solc 0.8.31 (static binary from binaries.soliditylang.org)
+case "$(uname -m)" in
+  x86_64|amd64)  SOLC=solc-linux-amd64-v0.8.31+commit.fd3a2265 ;;
+  aarch64|arm64) SOLC=solc-linux-arm64-v0.8.31+commit.fd3a2265 ;;
+  *)             echo "unsupported arch $(uname -m)"; exit 1 ;;
+esac
+curl -fsSL "https://binaries.soliditylang.org/linux-$(uname -m | sed -e s/aarch64/arm64/ -e s/x86_64/amd64/)/${SOLC}" \
+  -o /usr/local/bin/solc && chmod +x /usr/local/bin/solc
+
+# 3. jq + git
+sudo apt install -y jq git         # Debian/Ubuntu
+# sudo apk add jq git                # Alpine
+# sudo pacman -S jq git              # Arch
+# sudo dnf install -y jq git         # RHEL/Fedora
+
+# 4. Verify
+forge --version && solc --version && jq --version
+```
+
+**macOS (Homebrew):**
+
+```bash
+brew install jq git
+curl -L https://foundry.paradigm.xyz | bash
+source ~/.zshrc
+foundryup
+curl -fsSL "https://binaries.soliditylang.org/macosx-amd64/solc-macosx-amd64-v0.8.31+commit.fd3a2265" \
+  -o /usr/local/bin/solc && chmod +x /usr/local/bin/solc
+forge --version && solc --version && jq --version
+```
+
+**Bionic Termux (Android, arm64):** use `./install.sh` (see TL;DR above). It
+handles the Bionic-specific e_type=2 issue with the static solc by fetching
+the Termux-packaged PIE 0.8.35 .deb from `packages.termux.dev` and patching
+`foundry.toml` automatically. Manual fallback:
+
+```bash
+pkg update && pkg install -y jq git curl
+
+# Foundry (the static alpine/arm64 build works natively on Termux)
+curl -L https://foundry.paradigm.xyz | bash
+source ~/.bashrc
+foundryup
+
+# solc — use the Termux-packaged PIE build, NOT the linux-arm64 static
+# build from binaries.soliditylang.org (the latter is e_type=2, which
+# Bionic's execve refuses).
+DEB_TMP="$HOME/.lcp-solc.deb"
+curl -fsSL "https://packages.termux.dev/apt/termux-main/pool/main/s/solidity/solidity_0.8.35_aarch64.deb" \
+  -o "$DEB_TMP"
+mkdir -p "$HOME/.lcp-solc-extract"
+(cd "$HOME/.lcp-solc-extract" && ar x "$DEB_TMP" \
+  && (tar -xJf data.tar.xz 2>/dev/null || tar -xzf data.tar.gz 2>/dev/null))
+cp "$HOME/.lcp-solc-extract/data/data/com.termux/files/usr/bin/solc" \
+   "$PREFIX/bin/solc"
+chmod +x "$PREFIX/bin/solc"
+rm -rf "$DEB_TMP" "$HOME/.lcp-solc-extract"
+export PATH="$PREFIX/bin:$PATH"
+```
+
+**Windows (PowerShell):** install [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install)
+and use the Linux x86_64 block above. WSL2's kernel accepts both e_type=2
+and e_type=3 binaries.
+
 ### 2. Clone the repository
 
 ```bash
