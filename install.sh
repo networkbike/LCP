@@ -319,22 +319,11 @@ else
           warn "  solc installed but 'solc --version' failed."
           warn "  Will rely on forge to find it via PATH."
         fi
-        # Patch foundry.toml to comment out the 'solc = "0.8.31"'
-        # pin. forge would otherwise try to download 0.8.31 from
-        # binaries.soliditylang.org, which is e_type=2 and gets
-        # rejected by Bionic's execve. With the pin removed,
-        # forge uses the system solc on PATH (the Termux
-        # 0.8.35 PIE build). 0.8.35 satisfies our
-        # `pragma solidity ^0.8.20`.
-        if [[ -f "$SCRIPT_DIR/foundry.toml" ]] \
-           && grep -qE '^[[:space:]]*solc[[:space:]]*=' "$SCRIPT_DIR/foundry.toml" 2>/dev/null; then
-          if sed -i.bak -E 's/^[[:space:]]*solc[[:space:]]*=[[:space:]]*"(0\.8\.[0-9]+)"/# solc = "\1" # Termux: use system solc (0.8.35 PIE) instead of e_type=2 download/' "$SCRIPT_DIR/foundry.toml" 2>/dev/null; then
-            rm -f "$SCRIPT_DIR/foundry.toml.bak"
-            ok "  patched foundry.toml: commented out solc pin (use system solc on Termux)"
-          else
-            warn "  could not patch foundry.toml; forge may still try to download solc 0.8.31"
-          fi
-        fi
+        # NOTE: we don't patch foundry.toml here. SCRIPT_DIR
+        # isn't set yet (this is Step 3; the LCP repo is
+        # cloned in Step 4). The patch happens in Step 4.
+        # Flag that we need to patch in Step 4.
+        NEED_FOUNDRY_TOML_PATCH=1
       fi
     else
       rm -f "$DEB_TMP"
@@ -427,6 +416,24 @@ else
   log "  forge-std already present in lib/"
 fi
 ok "LCP repo + forge-std ready at $SCRIPT_DIR"
+
+# On Termux, patch foundry.toml to comment out the
+# 'solc = "0.8.31"' pin. forge would otherwise try to download
+# the e_type=2 linux-arm64 static build, which Bionic's execve
+# refuses. With the pin removed, forge uses the system solc on
+# PATH (the Termux 0.8.35 PIE build). 0.8.35 satisfies our
+# `pragma solidity ^0.8.20`. The Pharos grader runs on a Linux
+# server where the pin is fine.
+if [[ ${NEED_FOUNDRY_TOML_PATCH:-0} -eq 1 ]] \
+   && [[ -f "$SCRIPT_DIR/foundry.toml" ]] \
+   && grep -qE '^[[:space:]]*solc[[:space:]]*=' "$SCRIPT_DIR/foundry.toml" 2>/dev/null; then
+  if sed -i.bak -E 's/^[[:space:]]*solc[[:space:]]*=[[:space:]]*"(0\.8\.[0-9]+)"/# solc = "\1" # Termux: use system solc (0.8.35 PIE) instead of e_type=2 download/' "$SCRIPT_DIR/foundry.toml" 2>/dev/null; then
+    rm -f "$SCRIPT_DIR/foundry.toml.bak"
+    ok "  patched foundry.toml: commented out solc pin (use system solc on Termux)"
+  else
+    warn "  could not patch foundry.toml; forge may still try to download solc 0.8.31"
+  fi
+fi
 
 # --- Step 5: Make the CLI executable ----------------------------------------
 log "Step 5/6: marking CLI as executable"
