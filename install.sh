@@ -167,7 +167,7 @@ if [[ $SKIP_FORGE -eq 0 ]]; then
       TARBALL="foundry_${VERSION}_alpine_${ARCH}.tar.gz"
       URL="https://github.com/foundry-rs/foundry/releases/download/${VERSION}/${TARBALL}"
       log "  downloading Foundry ${VERSION} (alpine/${ARCH}, static, ~80 MB)"
-      TMP_TGZ="/tmp/${TARBALL}.$$"
+      TMP_TGZ="$HOME/.lcp-${TARBALL}.$$"
       if ! curl -fsSL "$URL" 2>/dev/null > "$TMP_TGZ"; then
         rm -f "$TMP_TGZ"
         fail "could not download ${URL}" 1
@@ -236,8 +236,11 @@ else
     SOLC_URL="https://binaries.soliditylang.org/${SOLC_ARCH}/solc-${SOLC_ARCH}-v0.8.31+commit.fd3a2265"
     # Stream to stdout, redirect to file. Some Termux builds hit a
     # 'curl: (23) client returned ERROR on write' bug with -o.
-    SOLC_TMP="/tmp/solc-static.$$"
-    if curl -fsSL "$SOLC_URL" 2>/dev/null > "$SOLC_TMP"; then
+    # Use a $HOME path for the temp file (not /tmp, which can be
+    # owned by another uid on Termux).
+    SOLC_TMP="$HOME/.lcp-solc.$$"
+    rm -f "$SOLC_TMP"
+    if curl -fsSL --retry 3 --retry-delay 2 "$SOLC_URL" 2>/dev/null > "$SOLC_TMP"; then
       if [[ $TERMUX -eq 1 ]]; then
         cp -f "$SOLC_TMP" "$PREFIX/bin/solc"
         chmod +x "$PREFIX/bin/solc"
@@ -253,10 +256,10 @@ else
     else
       rm -f "$SOLC_TMP"
       warn "  failed to download solc from $SOLC_URL"
-      warn "  continuing without solc. forge test will try to download it itself."
-      warn "  If 'forge test' later complains about solc, re-run the install"
-      warn "  or download manually:"
-      warn "    curl -fsSL '$SOLC_URL' -o /usr/local/bin/solc && chmod +x /usr/local/bin/solc"
+      warn "  continuing without solc. forge will try to download it"
+      warn "  itself the first time you run 'forge test'."
+      warn "  If that also fails, run the install again to retry, or:"
+      warn "    curl -fsSL '$SOLC_URL' -o \$PREFIX/bin/solc && chmod +x \$PREFIX/bin/solc"
     fi
   else
     warn "no static solc available for $(uname -m); forge may use its bundled solc-bin"
@@ -267,25 +270,37 @@ fi
 log "Step 4/6: LCP repo + forge-std"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# If the script is in a directory that's not a git repo (e.g. user
-# just downloaded install.sh alone), clone the repo to $HOME/LCP and
-# continue from there. This makes the install robust to a partial
-# or aborted clone.
-if [[ ! -d "$SCRIPT_DIR/.git" ]]; then
-  TARGET="$HOME/LCP"
-  if [[ -d "$TARGET/.git" ]]; then
-    log "  $SCRIPT_DIR is not a git repo; using existing $TARGET"
-    SCRIPT_DIR="$TARGET"
-    cd "$SCRIPT_DIR"
-  else
-    log "  cloning LCP into $TARGET"
-    git clone --depth 1 https://github.com/networkbike/LCP.git "$TARGET"
-    SCRIPT_DIR="$TARGET"
-    cd "$SCRIPT_DIR"
-  fi
+# Resolve the actual LCP repo directory. Three cases:
+#  1. SCRIPT_DIR is a git repo (the user ran from a real clone).
+#  2. SCRIPT_DIR is empty/non-existent and $HOME/LCP is a real clone.
+#     (user ran install.sh from an empty target, auto-recovery).
+#  3. $HOME/LCP exists but isn't a git repo and isn't empty.
+#     This is a partially-failed previous install. We refuse to
+#     clobber; we tell the user to clean up and re-run.
+if [[ -d "$SCRIPT_DIR/.git" ]]; then
+  log "  using $SCRIPT_DIR (git repo)"
+  cd "$SCRIPT_DIR"
+elif [[ -d "$HOME/LCP/.git" ]]; then
+  log "  $SCRIPT_DIR is not a git repo; using existing $HOME/LCP"
+  SCRIPT_DIR="$HOME/LCP"
+  cd "$SCRIPT_DIR"
+elif [[ -d "$HOME/LCP" ]] && [[ -n "$(ls -A "$HOME/LCP" 2>/dev/null)" ]]; then
+  warn "  $HOME/LCP exists and is non-empty but is not a git repo."
+  warn "  This usually means a previous 'git clone' failed mid-way."
+  warn "  Run:    rm -rf \$HOME/LCP"
+  warn "  Then re-run: ./install.sh"
+  fail "aborting to avoid clobbering existing files" 5
 else
+  log "  cloning LCP into $HOME/LCP"
+  git clone --depth 1 https://github.com/networkbike/LCP.git "$HOME/LCP"
+  SCRIPT_DIR="$HOME/LCP"
+  cd "$SCRIPT_DIR"
+fi
+
+# Refresh from origin if we have a clean git repo.
+if [[ -d "$SCRIPT_DIR/.git" ]]; then
   log "  refreshing $SCRIPT_DIR from origin"
-  git pull --ff-only || true
+  git pull --ff-only 2>/dev/null || true
 fi
 
 if [[ ! -d "$SCRIPT_DIR/lib/forge-std" ]]; then
@@ -305,17 +320,22 @@ ok "examples/score.sh and test/test_score.sh are +x"
 if [[ $SKIP_VERIFY -eq 0 ]]; then
   log "Step 6/6: running forge test -vvv"
   cd "$SCRIPT_DIR"
-  if ! forge test 2>&1 | tee /tmp/lcp-forge-test.log | tail -20; then
-    fail "forge test failed (see /tmp/lcp-forge-test.log)" 3
+  # Use $HOME for log files. On Termux, /tmp is sometimes owned by
+  # a different uid and unwriteable, causing 'tee: Permission denied'.
+  FORGE_LOG="$HOME/.lcp-forge-test.log"
+  SHELL_LOG="$HOME/.lcp-shell-test.log"
+  rm -f "$FORGE_LOG" "$SHELL_LOG" 2>/dev/null || true
+  if ! forge test 2>&1 | tee "$FORGE_LOG" | tail -20; then
+    fail "forge test failed (see $FORGE_LOG)" 3
   fi
-  if ! grep -q "7 passed" /tmp/lcp-forge-test.log; then
+  if ! grep -q "7 passed" "$FORGE_LOG"; then
     fail "forge test did not report 7 passed" 3
   fi
   ok "forge test: 7 passed; 0 failed"
 
   log "  running bash test/test_score.sh"
-  if ! bash test/test_score.sh 2>&1 | tee /tmp/lcp-shell-test.log | tail -10; then
-    fail "shell smoke test failed (see /tmp/lcp-shell-test.log)" 4
+  if ! bash test/test_score.sh 2>&1 | tee "$SHELL_LOG" | tail -10; then
+    fail "shell smoke test failed (see $SHELL_LOG)" 4
   fi
   ok "shell smoke test passed"
 else
