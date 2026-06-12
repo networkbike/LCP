@@ -391,6 +391,24 @@ if [[ $SKIP_VERIFY -eq 0 ]]; then
     SOLC_BIN="$(command -v solc)"
     export PATH="$(dirname "$SOLC_BIN"):$PATH"
   fi
+
+  # Pre-clean any stale out/ or cache/ from prior runs (e.g. if a
+  # previous install was interrupted, the cache can have corrupt
+  # artifacts that cause 'forge test' to fail with confusing errors).
+  rm -rf "$SCRIPT_DIR/out" "$SCRIPT_DIR/cache" 2>/dev/null || true
+  # Make sure out/ and cache/ are writable.
+  mkdir -p "$SCRIPT_DIR/out" "$SCRIPT_DIR/cache" 2>/dev/null || true
+
+  # Run forge build first (so compile errors are caught before
+  # forge test's parallel runner tries to compile under load). If
+  # forge build fails, print the output and continue — the user can
+  # then run 'forge build' manually to see the full error.
+  log "  running forge build (warm-up compile)"
+  if ! forge build > "$HOME/.lcp-forge-build.log" 2>&1; then
+    warn "  forge build failed. Output:"
+    sed 's/^/    /' "$HOME/.lcp-forge-build.log" 2>/dev/null | head -40
+    warn "  Full log at: $HOME/.lcp-forge-build.log"
+  fi
   # Use $HOME for log files. On Termux, /tmp is sometimes owned by
   # a different uid and unwriteable, causing 'tee: Permission denied'.
   FORGE_LOG="$HOME/.lcp-forge-test.log"
@@ -412,9 +430,22 @@ if [[ $SKIP_VERIFY -eq 0 ]]; then
       warn "  Termux phone this will work. Re-run the install on the actual"
       warn "  device to confirm."
     else
-      fail "forge test failed (see $FORGE_LOG)" 3
+      # Print the log inline so the user can see what failed.
+      warn "  forge test failed. Log follows:"
+      echo ""
+      sed 's/^/    /' "$FORGE_LOG" 2>/dev/null | head -60
+      echo ""
+      warn "  Full log at: $FORGE_LOG"
+      warn "  Common causes:"
+      warn "    - solc binary on PATH is a different version than forge.toml requires"
+      warn "      (LCP pins solc = 0.8.31; verify with: solc --version)"
+      warn "    - out/ or cache/ is read-only (try: chmod -R u+w .)"
+      warn "    - lib/forge-std is missing or wrong commit (re-run install)"
+      fail "forge test failed (exit $FORGE_RC, see $FORGE_LOG)" 3
     fi
   elif ! grep -q "7 passed" "$FORGE_LOG"; then
+    warn "  forge test didn't report '7 passed'. Log follows:"
+    sed 's/^/    /' "$FORGE_LOG" 2>/dev/null | head -30
     fail "forge test did not report 7 passed" 3
   else
     ok "forge test: 7 passed; 0 failed"
