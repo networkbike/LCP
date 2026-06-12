@@ -241,6 +241,17 @@ log "Step 3/6: Solidity compiler (solc)"
 if command -v solc >/dev/null 2>&1 && solc --version >/dev/null 2>&1; then
   ok "solc already installed: $(solc --version 2>&1 | head -1)"
 else
+  # If a previous install left a broken solc binary at the target
+  # path (e.g. the e_type=2 linux-arm64 static build on Termux),
+  # nuke it before installing. forge can find a solc on PATH that
+  # immediately errors out at exec time — it'd rather not be there
+  # at all.
+  if [[ $TERMUX -eq 1 ]] && [[ -f "$PREFIX/bin/solc" ]]; then
+    if ! solc --version >/dev/null 2>&1; then
+      warn "  removing broken solc at $PREFIX/bin/solc (was on PATH but failed to exec)"
+      rm -f "$PREFIX/bin/solc"
+    fi
+  fi
   # Download the official static solc directly from the Solidity
   # binaries mirror. Both linux-amd64 and linux-arm64 are available.
   case "$(uname -m)" in
@@ -248,7 +259,89 @@ else
     aarch64|arm64)  SOLC_ARCH="linux-arm64" ;;
     *)              SOLC_ARCH="" ;;
   esac
-  if [[ -n "$SOLC_ARCH" ]]; then
+  # Solc is a Solidity compiler binary. On Linux we use the static
+  # build from binaries.soliditylang.org. On Termux, however, that
+  # build is e_type=2 (non-PIE), which Bionic's execve refuses with
+  # 'has unexpected e_type: 2'. The fix on Termux is to use the
+  # official Termux-packaged solc, which is built as a PIE
+  # (e_type=3) dynamically-linked binary and works on Bionic.
+  if [[ $TERMUX -eq 1 ]]; then
+    # Termux path: download the official Termux solc .deb and
+    # extract the binary. We pin the 0.8.31 build to match
+    # foundry.toml; if unavailable, fall back to the latest.
+    log "  installing Termux-packaged solc 0.8.31 (PIE for Bionic)"
+    DEB_URL="https://packages.termux.dev/apt/termux-main/pool/main/s/solidity/solidity_0.8.35_aarch64.deb"
+    DEB_TMP="$HOME/.lcp-solc.deb.$$"
+    rm -f "$DEB_TMP"
+    if curl -fsSL --retry 3 --retry-delay 2 "$DEB_URL" 2>/dev/null > "$DEB_TMP"; then
+      # The Termux .deb extracts the binary at
+      # data/data/com.termux/files/usr/bin/solc. We pull just that
+      # out and put it in $PREFIX/bin so forge finds it.
+      SOLC_BIN="$PREFIX/bin/solc"
+      if command -v dpkg-deb >/dev/null 2>&1; then
+        dpkg-deb -x "$DEB_TMP" "$HOME/.lcp-solc-extract.$$" 2>/dev/null \
+          && cp -f "$HOME/.lcp-solc-extract.$$/data/data/com.termux/files/usr/bin/solc" "$SOLC_BIN" \
+          && chmod +x "$SOLC_BIN" \
+          && rm -rf "$HOME/.lcp-solc-extract.$$" \
+          && ok "  solc installed at $SOLC_BIN (Termux PIE build)" \
+          || warn "  dpkg-deb extract failed; trying ar fallback"
+      fi
+      if [[ ! -x "$SOLC_BIN" ]]; then
+        # Fallback: use `ar` to extract just data.tar.* from the .deb
+        # and untar that.
+        if command -v ar >/dev/null 2>&1; then
+          cd "$HOME/.lcp-solc-ar.$$" 2>/dev/null || mkdir -p "$HOME/.lcp-solc-ar.$$" && cd "$HOME/.lcp-solc-ar.$$"
+          ar x "$DEB_TMP" 2>/dev/null
+          if [[ -f data.tar.xz ]]; then
+            tar -xJf data.tar.xz 2>/dev/null
+          elif [[ -f data.tar.gz ]]; then
+            tar -xzf data.tar.gz 2>/dev/null
+          fi
+          if [[ -f data/data/com.termux/files/usr/bin/solc ]]; then
+            cp -f data/data/com.termux/files/usr/bin/solc "$SOLC_BIN"
+            chmod +x "$SOLC_BIN"
+            ok "  solc installed at $SOLC_BIN (Termux PIE build, ar-extracted)"
+          else
+            warn "  could not locate solc binary inside the .deb"
+          fi
+          cd "$HOME" && rm -rf "$HOME/.lcp-solc-ar.$$"
+        else
+          warn "  neither dpkg-deb nor ar are available; cannot extract .deb"
+        fi
+      fi
+      rm -f "$DEB_TMP"
+      if [[ -x "$PREFIX/bin/solc" ]]; then
+        # Sanity-check: the Termux solc is e_type=3 (PIE) and runs.
+        if solc --version >/dev/null 2>&1; then
+          ok "  solc is working: $(solc --version 2>&1 | head -1)"
+          export PATH="$PREFIX/bin:$PATH"
+        else
+          warn "  solc installed but 'solc --version' failed."
+          warn "  Will rely on forge to find it via PATH."
+        fi
+        # Patch foundry.toml to comment out the 'solc = "0.8.31"'
+        # pin. forge would otherwise try to download 0.8.31 from
+        # binaries.soliditylang.org, which is e_type=2 and gets
+        # rejected by Bionic's execve. With the pin removed,
+        # forge uses the system solc on PATH (the Termux
+        # 0.8.35 PIE build). 0.8.35 satisfies our
+        # `pragma solidity ^0.8.20`.
+        if [[ -f "$SCRIPT_DIR/foundry.toml" ]] \
+           && grep -qE '^[[:space:]]*solc[[:space:]]*=' "$SCRIPT_DIR/foundry.toml" 2>/dev/null; then
+          if sed -i.bak -E 's/^[[:space:]]*solc[[:space:]]*=[[:space:]]*"(0\.8\.[0-9]+)"/# solc = "\1" # Termux: use system solc (0.8.35 PIE) instead of e_type=2 download/' "$SCRIPT_DIR/foundry.toml" 2>/dev/null; then
+            rm -f "$SCRIPT_DIR/foundry.toml.bak"
+            ok "  patched foundry.toml: commented out solc pin (use system solc on Termux)"
+          else
+            warn "  could not patch foundry.toml; forge may still try to download solc 0.8.31"
+          fi
+        fi
+      fi
+    else
+      rm -f "$DEB_TMP"
+      warn "  failed to download Termux solc .deb from $DEB_URL"
+      warn "  falling back to static linux-arm64 solc (may have e_type issues)"
+    fi
+  elif [[ -n "$SOLC_ARCH" ]]; then
     log "  downloading solc 0.8.31 ($SOLC_ARCH static binary)"
     SOLC_URL="https://binaries.soliditylang.org/${SOLC_ARCH}/solc-${SOLC_ARCH}-v0.8.31+commit.fd3a2265"
     # Stream to stdout, redirect to file. Some Termux builds hit a
@@ -267,17 +360,9 @@ else
       SOLC_OK=1
     fi
     if [[ $SOLC_OK -eq 1 ]] && [[ -s "$SOLC_TMP" ]]; then
-      if [[ $TERMUX -eq 1 ]]; then
-        cp -f "$SOLC_TMP" "$PREFIX/bin/solc"
-        chmod +x "$PREFIX/bin/solc"
-        ok "  solc installed at $PREFIX/bin/solc"
-        # $PREFIX/bin is on PATH in Termux, but be defensive.
-        export PATH="$PREFIX/bin:$PATH"
-      else
-        install -m 0755 "$SOLC_TMP" /usr/local/bin/solc
-        ok "  solc installed at /usr/local/bin/solc"
-        export PATH="/usr/local/bin:$PATH"
-      fi
+      install -m 0755 "$SOLC_TMP" /usr/local/bin/solc
+      ok "  solc installed at /usr/local/bin/solc"
+      export PATH="/usr/local/bin:$PATH"
       rm -f "$SOLC_TMP"
     else
       rm -f "$SOLC_TMP"
@@ -285,7 +370,7 @@ else
       warn "  continuing without solc. The install's final 'forge test'"
       warn "  step will retry solc installation. If that also fails,"
       warn "  run the install again to retry, or download manually:"
-      warn "    curl -fsSL '$SOLC_URL' -o \$PREFIX/bin/solc && chmod +x \$PREFIX/bin/solc"
+      warn "    curl -fsSL '$SOLC_URL' -o /usr/local/bin/solc && chmod +x /usr/local/bin/solc"
     fi
   else
     warn "no static solc available for $(uname -m); forge may use its bundled solc-bin"
@@ -355,33 +440,64 @@ if [[ $SKIP_VERIFY -eq 0 ]]; then
 
   # Last-ditch solc install. If Step 3 failed (network glitch, /tmp
   # permission, anything) and the user is now hitting 'Error: solc
-  # not found' from forge, try one more time. We do this with a
-  # different temp path and additional retry to maximize the chance
-  # of success.
+  # not found' from forge, try one more time. On Termux we use the
+  # Termux-packaged solc (PIE for Bionic) — NOT the linux-arm64
+  # static build, which is e_type=2 and gets rejected by Bionic's
+  # execve.
   if ! command -v solc >/dev/null 2>&1 || ! solc --version >/dev/null 2>&1; then
     log "  solc missing; attempting last-ditch download"
-    case "$(uname -m)" in
-      x86_64|amd64)   SOLC_ARCH="linux-amd64" ;;
-      aarch64|arm64)  SOLC_ARCH="linux-arm64" ;;
-      *)              SOLC_ARCH="" ;;
-    esac
-    if [[ -n "$SOLC_ARCH" ]]; then
-      SOLC_URL="https://binaries.soliditylang.org/${SOLC_ARCH}/solc-${SOLC_ARCH}-v0.8.31+commit.fd3a2265"
-      SOLC_TMP="$HOME/.lcp-solc-final.$$"
-      rm -f "$SOLC_TMP"
-      if curl -fsSL --retry 5 --retry-delay 3 -o "$SOLC_TMP" "$SOLC_URL" 2>/dev/null; then
-        if [[ $TERMUX -eq 1 ]]; then
-          cp -f "$SOLC_TMP" "$PREFIX/bin/solc"
-          chmod +x "$PREFIX/bin/solc"
-          ok "  solc installed at $PREFIX/bin/solc (final attempt)"
-        else
+    if [[ $TERMUX -eq 1 ]]; then
+      DEB_URL="https://packages.termux.dev/apt/termux-main/pool/main/s/solidity/solidity_0.8.35_aarch64.deb"
+      DEB_TMP="$HOME/.lcp-solc-final.deb.$$"
+      rm -f "$DEB_TMP"
+      if curl -fsSL --retry 5 --retry-delay 3 "$DEB_URL" 2>/dev/null > "$DEB_TMP"; then
+        rm -rf "$HOME/.lcp-solc-final-ext.$$" 2>/dev/null
+        if command -v dpkg-deb >/dev/null 2>&1; then
+          dpkg-deb -x "$DEB_TMP" "$HOME/.lcp-solc-final-ext.$$" 2>/dev/null \
+            && cp -f "$HOME/.lcp-solc-final-ext.$$/data/data/com.termux/files/usr/bin/solc" "$PREFIX/bin/solc" \
+            && chmod +x "$PREFIX/bin/solc" \
+            && rm -rf "$HOME/.lcp-solc-final-ext.$$" \
+            && ok "  solc installed at $PREFIX/bin/solc (final attempt, Termux PIE)"
+        fi
+        if [[ ! -x "$PREFIX/bin/solc" ]] && command -v ar >/dev/null 2>&1; then
+          mkdir -p "$HOME/.lcp-solc-final-ar.$$"
+          (cd "$HOME/.lcp-solc-final-ar.$$" && ar x "$DEB_TMP" 2>/dev/null \
+            && (tar -xJf data.tar.xz 2>/dev/null || tar -xzf data.tar.gz 2>/dev/null) \
+            && cp -f data/data/com.termux/files/usr/bin/solc "$PREFIX/bin/solc" \
+            && chmod +x "$PREFIX/bin/solc")
+          rm -rf "$HOME/.lcp-solc-final-ar.$$"
+          [[ -x "$PREFIX/bin/solc" ]] && ok "  solc installed at $PREFIX/bin/solc (final attempt, Termux PIE, ar)"
+        fi
+        rm -f "$DEB_TMP"
+        # Patch foundry.toml in the last-ditch path too.
+        if [[ -x "$PREFIX/bin/solc" ]] \
+           && [[ -f "$SCRIPT_DIR/foundry.toml" ]] \
+           && grep -qE '^[[:space:]]*solc[[:space:]]*=' "$SCRIPT_DIR/foundry.toml" 2>/dev/null; then
+          sed -i.bak -E 's/^[[:space:]]*solc[[:space:]]*=[[:space:]]*"(0\.8\.[0-9]+)"/# solc = "\1" # Termux: use system solc/' "$SCRIPT_DIR/foundry.toml" 2>/dev/null
+          rm -f "$SCRIPT_DIR/foundry.toml.bak"
+        fi
+      else
+        rm -f "$DEB_TMP"
+        warn "  last-ditch Termux solc .deb download also failed. forge test may fail."
+      fi
+    else
+      case "$(uname -m)" in
+        x86_64|amd64)   SOLC_ARCH="linux-amd64" ;;
+        aarch64|arm64)  SOLC_ARCH="linux-arm64" ;;
+        *)              SOLC_ARCH="" ;;
+      esac
+      if [[ -n "$SOLC_ARCH" ]]; then
+        SOLC_URL="https://binaries.soliditylang.org/${SOLC_ARCH}/solc-${SOLC_ARCH}-v0.8.31+commit.fd3a2265"
+        SOLC_TMP="$HOME/.lcp-solc-final.$$"
+        rm -f "$SOLC_TMP"
+        if curl -fsSL --retry 5 --retry-delay 3 "$SOLC_URL" 2>/dev/null > "$SOLC_TMP"; then
           install -m 0755 "$SOLC_TMP" /usr/local/bin/solc
           ok "  solc installed at /usr/local/bin/solc (final attempt)"
+          rm -f "$SOLC_TMP"
+        else
+          rm -f "$SOLC_TMP"
+          warn "  last-ditch solc download also failed. forge test may still fail."
         fi
-        rm -f "$SOLC_TMP"
-      else
-        rm -f "$SOLC_TMP"
-        warn "  last-ditch solc download also failed. forge test may still fail."
       fi
     fi
   fi

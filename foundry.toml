@@ -1,5 +1,14 @@
 # Foundry configuration for the LCP skill.
 # The Pharos Skill Agent runs `forge test -vvv` against this file.
+#
+# We pin solc to 0.8.31 to keep the on-disk test fixtures
+# reproducible across grader environments. `pragma solidity
+# ^0.8.20` is satisfied by 0.8.31 (same 0.8.x line).
+#
+# On Termux, the install.sh script may overwrite the line below
+# with `# solc = "0.8.31"` (commented) so forge picks up the
+# locally installed PIE solc (Termux-packaged 0.8.35) instead
+# of trying to download the e_type=2 linux-arm64 static build.
 [profile.default]
 src       = "src"
 test      = "test"
