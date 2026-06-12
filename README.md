@@ -217,33 +217,62 @@ forge --version && solc --version && jq --version
 ```
 
 **Bionic Termux (Android, arm64):** use `./install.sh` (see TL;DR above). It
-handles the Bionic-specific e_type=2 issue with the static solc by fetching
-the Termux-packaged PIE 0.8.35 .deb from `packages.termux.dev` and patching
-`foundry.toml` automatically. Manual fallback:
+handles the Bionic-specific issues (Bionic rejects both foundryup's alpine
+static build for having a TLS segment with 8-byte alignment — needs 64 — and
+the linux-arm64 build for referencing the non-existent glibc loader) by
+fetching the Termux-packaged PIE foundry and solc .debs from
+`packages.termux.dev`. Manual fallback:
 
 ```bash
-pkg update && pkg install -y jq git curl
+pkg update && pkg install -y jq git curl xz-utils  # xz-utils gives xzcat as a fallback
 
-# Foundry (the static alpine/arm64 build works natively on Termux)
-curl -L https://foundry.paradigm.xyz | bash
-source ~/.bashrc
-foundryup
+# 1. Foundry — use the Termux-packaged .deb, NOT foundryup.
+#    foundryup installs the alpine/arm64 static build which has a
+#    TLS segment with 8-byte alignment; Bionic refuses it with
+#    "segment is underaligned: alignment is 8, needs to be at
+#    least 64 for ARM64 Bionic". The Termux-packaged foundry
+#    is a PIE binary linked against /system/bin/linker64 with
+#    no TLS segment — runs natively on Bionic.
+rm -rf "$HOME/.foundry" 2>/dev/null
+for b in cast forge anvil chisel; do
+  [ -e "$PREFIX/bin/$b" ] && ! "$PREFIX/bin/$b" --version >/dev/null 2>&1 && rm -f "$PREFIX/bin/$b"
+done
+FOUNDRY_DEB="$HOME/.lcp-foundry.deb"
+curl -fsSL "https://packages.termux.dev/apt/termux-main/pool/main/f/foundry/foundry_1.7.1-1_aarch64.deb" -o "$FOUNDRY_DEB"
+mkdir -p "$HOME/.lcp-foundry-extract" && (cd "$HOME/.lcp-foundry-extract" && dpkg-deb -x "$FOUNDRY_DEB" .)
+for b in cast forge anvil chisel; do
+  cp -f "$HOME/.lcp-foundry-extract/data/data/com.termux/files/usr/bin/$b" "$PREFIX/bin/$b"
+  cp -f "$HOME/.lcp-foundry-extract/data/data/com.termux/files/usr/bin/$b" "$HOME/.foundry/bin/$b" 2>/dev/null || mkdir -p "$HOME/.foundry/bin" && cp -f "$HOME/.lcp-foundry-extract/data/data/com.termux/files/usr/bin/$b" "$HOME/.foundry/bin/$b"
+done
+chmod +x "$PREFIX/bin/"{cast,forge,anvil,chisel} "$HOME/.foundry/bin/"{cast,forge,anvil,chisel}
+rm -rf "$FOUNDRY_DEB" "$HOME/.lcp-foundry-extract"
 
-# solc — use the Termux-packaged PIE build, NOT the linux-arm64 static
-# build from binaries.soliditylang.org (the latter is e_type=2, which
-# Bionic's execve refuses).
-DEB_TMP="$HOME/.lcp-solc.deb"
-curl -fsSL "https://packages.termux.dev/apt/termux-main/pool/main/s/solidity/solidity_0.8.35_aarch64.deb" \
-  -o "$DEB_TMP"
-mkdir -p "$HOME/.lcp-solc-extract"
-(cd "$HOME/.lcp-solc-extract" && ar x "$DEB_TMP" \
-  && (tar -xJf data.tar.xz 2>/dev/null || tar -xzf data.tar.gz 2>/dev/null))
-cp "$HOME/.lcp-solc-extract/data/data/com.termux/files/usr/bin/solc" \
-   "$PREFIX/bin/solc"
+# 2. solc — Termux-packaged PIE .deb. (Same Bionic-rejection
+#    story as the Foundry case.)
+SOLC_DEB="$HOME/.lcp-solc.deb"
+curl -fsSL "https://packages.termux.dev/apt/termux-main/pool/main/s/solidity/solidity_0.8.35_aarch64.deb" -o "$SOLC_DEB"
+mkdir -p "$HOME/.lcp-solc-extract" && (cd "$HOME/.lcp-solc-extract" && dpkg-deb -x "$SOLC_DEB" .)
+cp "$HOME/.lcp-solc-extract/data/data/com.termux/files/usr/bin/solc" "$PREFIX/bin/solc"
 chmod +x "$PREFIX/bin/solc"
-rm -rf "$DEB_TMP" "$HOME/.lcp-solc-extract"
-export PATH="$PREFIX/bin:$PATH"
+rm -rf "$SOLC_DEB" "$HOME/.lcp-solc-extract"
+
+# 3. Patch foundry.toml so forge uses the system solc on PATH
+#    (otherwise forge tries to download the e_type=2 static 0.8.31
+#    and Bionic refuses it).
+cd ~/LCP
+sed -i.bak -E 's/^[[:space:]]*solc[[:space:]]*=[[:space:]]*"0\.8\.[0-9]+"/# solc = "0.8.31"  # Termux: use system solc (0.8.35 PIE)/' foundry.toml
+rm -f foundry.toml.bak
+
+# 4. Verify
+export PATH="$HOME/.foundry/bin:$PREFIX/bin:$PATH"
+forge --version && cast --version && solc --version && jq --version
 ```
+
+If `dpkg-deb` isn't available, the install.sh's ar+tar fallback (with
+`tar -xJf` → `xzcat | tar -x` → `xz -dc | tar -x` → `python3` strategies)
+also works. Termux's dpkg-deb is part of the base system, so the primary
+`dpkg-deb -x` path should succeed.
+
 
 **Windows (PowerShell):** install [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install)
 and use the Linux x86_64 block above. WSL2's kernel accepts both e_type=2
