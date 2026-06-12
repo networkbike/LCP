@@ -22,6 +22,7 @@ runtime:
     version: ">=1.0.0"
     rationale: "The Pharos Skill Agent runs `forge test -vvv` against this skill. Foundry is the only required runtime."
     install: "curl -L https://foundry.paradigm.xyz | bash && foundryup"
+    solc: "0.8.31 (foundry.toml pins this; the bundled LCP install.sh downloads it from binaries.soliditylang.org on Linux/macOS. On Bionic Termux the install.sh fetches the Termux-packaged PIE 0.8.35 .deb from packages.termux.dev, extracts it, and patches foundry.toml to use the system solc on PATH. The Pharos grader runs on a Linux server, so the foundry.toml pin is honored there.)"
 test:
   command: "forge test -vvv"
   expected: "7 passing"
@@ -134,6 +135,15 @@ Solidity and validates every anchor point in
 
 # Or, manually:
 curl -L https://foundry.paradigm.xyz | bash && foundryup
+
+# Install solc. On Linux/macOS the static binary from
+# binaries.soliditylang.org works out of the box. On Bionic Termux
+# the static linux-arm64 build is e_type=2 (non-PIE) and Bionic's
+# execve refuses it; the install.sh handles this automatically, so
+# the simplest path is just to run ./install.sh. Manual fallback
+# for Termux: download the Termux-packaged solc .deb and extract it
+# to $PREFIX/bin/solc — see install.sh for the exact recipe.
+curl -fsSL "https://binaries.soliditylang.org/linux-amd64/solc-linux-amd64-v0.8.31+commit.fd3a2265" -o /usr/local/bin/solc && chmod +x /usr/local/bin/solc
 
 # Run the Foundry test suite
 forge test -vvv
