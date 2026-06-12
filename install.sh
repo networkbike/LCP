@@ -151,38 +151,88 @@ if [[ $SKIP_FORGE -eq 0 ]]; then
     ok "Foundry already installed and working (cast=$(command -v cast), forge=$(command -v forge))"
   else
     if [[ $TERMUX -eq 1 ]]; then
-      # --- Termux: download the static musl/alpine arm64 build -------
-      # The "alpine" build is statically linked against musl, so it
-      # doesn't depend on Termux's Bionic libc. This is the only
-      # Foundry release asset that runs natively on Termux.
+      # --- Termux: download the Termux-packaged Foundry .deb ---------
+      # The "alpine" static build from Foundry's GitHub release has
+      # a TLS segment with 8-byte alignment, which Bionic refuses
+      # with 'segment is underaligned: alignment is 8, needs to be
+      # at least 64 for ARM64 Bionic'. The glibc linux-arm64 build
+      # references /lib/ld-linux-aarch64.so.1 which doesn't exist
+      # on Bionic. Neither of Foundry's official builds runs on
+      # Termux.
       #
-      # IMPORTANT: install to $HOME/.foundry/bin (NOT $PREFIX/bin)
-      # so the Foundry binaries are co-located with where the
-      # standard foundryup installer would put them. We also make
-      # them visible to the Termux shell by symlinking into
-      # $PREFIX/bin for convenience.
-      mkdir -p "$HOME/.foundry/bin"
-      VERSION="v1.7.1"
-      ARCH="arm64"
-      TARBALL="foundry_${VERSION}_alpine_${ARCH}.tar.gz"
-      URL="https://github.com/foundry-rs/foundry/releases/download/${VERSION}/${TARBALL}"
-      log "  downloading Foundry ${VERSION} (alpine/${ARCH}, static, ~80 MB)"
-      TMP_TGZ="$HOME/.lcp-${TARBALL}.$$"
-      if ! curl -fsSL "$URL" 2>/dev/null > "$TMP_TGZ"; then
-        rm -f "$TMP_TGZ"
-        fail "could not download ${URL}" 1
-      fi
-      tar -xzf "$TMP_TGZ" -C "$HOME/.foundry/bin"
-      rm -f "$TMP_TGZ"
-      chmod +x "$HOME/.foundry/bin/"*
-      # Also expose cast/forge/anvil at $PREFIX/bin so the user
-      # doesn't need to export PATH manually every session.
+      # The fix: use the Termux-packaged foundry .deb, which is
+      # built as a PIE (e_type=3) dynamically-linked binary against
+      # /system/bin/linker64 (Bionic's loader) with no TLS segment.
+      # This is the only Foundry build that runs natively on a real
+      # Termux phone.
+      log "  installing Termux-packaged foundry 1.7.1 (PIE for Bionic)"
+      # First, remove any existing broken Foundry binaries so PATH
+      # is clean before we install the new ones. Otherwise the
+      # 'multiple chisel' warning or the underaligned-TLS error
+      # will surface later in the test run.
+      rm -rf "$HOME/.foundry" 2>/dev/null || true
       for b in cast forge anvil chisel; do
-        if [[ -x "$HOME/.foundry/bin/$b" ]]; then
-          cp -f "$HOME/.foundry/bin/$b" "$PREFIX/bin/$b" 2>/dev/null || true
+        if [[ -e "$PREFIX/bin/$b" ]]; then
+          # Sanity check: if the existing binary fails to exec,
+          # remove it.
+          if ! "$PREFIX/bin/$b" --version >/dev/null 2>&1; then
+            rm -f "$PREFIX/bin/$b"
+          fi
         fi
       done
-      ok "  installed to $HOME/.foundry/bin/ and \$PREFIX/bin/"
+      DEB_URL="https://packages.termux.dev/apt/termux-main/pool/main/f/foundry/foundry_1.7.1-1_aarch64.deb"
+      DEB_TMP="$HOME/.lcp-foundry.deb.$$"
+      rm -f "$DEB_TMP"
+      if ! curl -fsSL --retry 5 --retry-delay 3 "$DEB_URL" 2>/dev/null > "$DEB_TMP"; then
+        rm -f "$DEB_TMP"
+        fail "could not download ${DEB_URL}" 1
+      fi
+      # Extract with dpkg-deb (preferred) or ar+tar (fallback).
+      mkdir -p "$HOME/.foundry/bin" 2>/dev/null
+      EXTRACT_DIR="$HOME/.lcp-foundry-extract.$$"
+      rm -rf "$EXTRACT_DIR" 2>/dev/null
+      mkdir -p "$EXTRACT_DIR"
+      EXTRACT_OK=0
+      if command -v dpkg-deb >/dev/null 2>&1 \
+         && dpkg-deb -x "$DEB_TMP" "$EXTRACT_DIR" 2>/dev/null; then
+        EXTRACT_OK=1
+      elif command -v ar >/dev/null 2>&1; then
+        # Fallback: ar + tar. Termux's tar may not handle xz; try
+        # multiple decompression strategies.
+        if (cd "$EXTRACT_DIR" && ar x "$DEB_TMP" 2>/dev/null); then
+          if [[ -f "$EXTRACT_DIR/data.tar.xz" ]]; then
+            # Try xz-capable tar first, then xzdec+tar, then python.
+            if (cd "$EXTRACT_DIR" && tar -xJf data.tar.xz 2>/dev/null); then
+              EXTRACT_OK=1
+            elif command -v xzcat >/dev/null 2>&1; then
+              (cd "$EXTRACT_DIR" && xzcat data.tar.xz | tar -x 2>/dev/null) && EXTRACT_OK=1
+            elif command -v xz >/dev/null 2>&1; then
+              (cd "$EXTRACT_DIR" && xz -dc data.tar.xz | tar -x 2>/dev/null) && EXTRACT_OK=1
+            elif command -v python3 >/dev/null 2>&1; then
+              (cd "$EXTRACT_DIR" && python3 -c "import lzma, tarfile; tarfile.open('data.tar.xz').extractall('.')" 2>/dev/null) && EXTRACT_OK=1
+            fi
+          elif [[ -f "$EXTRACT_DIR/data.tar.gz" ]]; then
+            (cd "$EXTRACT_DIR" && tar -xzf data.tar.gz 2>/dev/null) && EXTRACT_OK=1
+          fi
+        fi
+      fi
+      rm -f "$DEB_TMP"
+      if [[ $EXTRACT_OK -eq 0 ]]; then
+        rm -rf "$EXTRACT_DIR" 2>/dev/null
+        fail "could not extract foundry .deb (need dpkg-deb or ar)" 1
+      fi
+      # Copy binaries to both $HOME/.foundry/bin/ (canonical
+      # location, matches foundryup layout) and $PREFIX/bin/
+      # (so the user doesn't need to export PATH manually).
+      for b in cast forge anvil chisel; do
+        if [[ -x "$EXTRACT_DIR/data/data/com.termux/files/usr/bin/$b" ]]; then
+          cp -f "$EXTRACT_DIR/data/data/com.termux/files/usr/bin/$b" "$HOME/.foundry/bin/$b" 2>/dev/null || true
+          cp -f "$EXTRACT_DIR/data/data/com.termux/files/usr/bin/$b" "$PREFIX/bin/$b" 2>/dev/null || true
+        fi
+      done
+      rm -rf "$EXTRACT_DIR" 2>/dev/null
+      chmod +x "$HOME/.foundry/bin/"* 2>/dev/null || true
+      ok "  installed to $HOME/.foundry/bin/ and \$PREFIX/bin/ (Termux PIE build)"
     else
       # --- Linux / macOS: standard foundryup -------------------------
       log "  downloading foundryup"
@@ -288,12 +338,23 @@ else
       fi
       if [[ ! -x "$SOLC_BIN" ]]; then
         # Fallback: use `ar` to extract just data.tar.* from the .deb
-        # and untar that.
+        # and untar that. Termux's tar may not handle xz; try
+        # xzcat/xz/python3 fallbacks.
         if command -v ar >/dev/null 2>&1; then
-          cd "$HOME/.lcp-solc-ar.$$" 2>/dev/null || mkdir -p "$HOME/.lcp-solc-ar.$$" && cd "$HOME/.lcp-solc-ar.$$"
-          ar x "$DEB_TMP" 2>/dev/null
+          mkdir -p "$HOME/.lcp-solc-ar.$$"
+          (cd "$HOME/.lcp-solc-ar.$$" && ar x "$DEB_TMP" 2>/dev/null)
+          cd "$HOME/.lcp-solc-ar.$$"
           if [[ -f data.tar.xz ]]; then
-            tar -xJf data.tar.xz 2>/dev/null
+            # Try xz-capable tar first, then xzcat, then xz, then python.
+            if ! tar -xJf data.tar.xz 2>/dev/null; then
+              if command -v xzcat >/dev/null 2>&1; then
+                xzcat data.tar.xz | tar -x 2>/dev/null
+              elif command -v xz >/dev/null 2>&1; then
+                xz -dc data.tar.xz | tar -x 2>/dev/null
+              elif command -v python3 >/dev/null 2>&1; then
+                python3 -c "import lzma, tarfile; tarfile.open('data.tar.xz').extractall('.')" 2>/dev/null
+              fi
+            fi
           elif [[ -f data.tar.gz ]]; then
             tar -xzf data.tar.gz 2>/dev/null
           fi
@@ -302,7 +363,9 @@ else
             chmod +x "$SOLC_BIN"
             ok "  solc installed at $SOLC_BIN (Termux PIE build, ar-extracted)"
           else
-            warn "  could not locate solc binary inside the .deb"
+            warn "  could not locate solc binary inside the .deb (data.tar.xz decompress may have failed)"
+            ls -la data/ 2>/dev/null
+            ls -la data/data/ 2>/dev/null
           fi
           cd "$HOME" && rm -rf "$HOME/.lcp-solc-ar.$$"
         else
